@@ -22,14 +22,11 @@ from utils import *
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--input', nargs='?', default='graph/karate.edgelist',
+    parser.add_argument('--input', nargs='?', default='data/amazon_sss.edges',
                         help='Input graph path')
     
     parser.add_argument('--features', nargs='?', default=None,
                         help='Input node features (npy)')
-
-    parser.add_argument('--output', nargs='?', default='emb/karate.emb',
-                        help='Embeddings path')
 
     parser.add_argument('--epoch', type=int, default=5,
                         help='Number of epoch. Default is 5.')
@@ -49,11 +46,8 @@ def parse_args():
     parser.add_argument('--window-size', type=int, default=5,
                         help='Context size for optimization. Default is 5.')
 
-    parser.add_argument('--iter', type=int, default=10,
-                        help='Number of epochs in SGD')
-
-    parser.add_argument('--workers', type=int, default=8,
-                        help='Number of parallel workers. Default is 8.')
+    parser.add_argument('--workers', type=int, default=4,
+                        help='Number of parallel workers. Default is 4.')
 
     parser.add_argument('--p', type=float, default=1,
                         help='Return hyperparameter. Default is 1.')
@@ -73,35 +67,6 @@ def parse_args():
 
     return parser.parse_args()
 
-
-# randomly divide data into few parts for the purpose of cross-validation
-def divide_data(input_list, group_number):
-    local_division = len(input_list) / float(group_number)
-    random.shuffle(input_list)
-    return [input_list[int(round(local_division * i)): int(round(local_division * (i + 1)))] for i in
-            range(group_number)]
-
-
-def randomly_choose_false_edges(nodes, true_edges, num):
-    true_edges_set = set(true_edges)
-    tmp_list = list()
-    all_flag = False
-    for _ in range(num):
-        trial = 0
-        while True:
-            x = nodes[random.randint(0, len(nodes)-1)]
-            y = nodes[random.randint(0, len(nodes)-1)]
-            trial += 1
-            if trial >= 1000:
-                all_flag = True
-                break
-            if x != y and (x, y) not in true_edges_set and (y, x) not in true_edges_set:
-                tmp_list.append((x, y))
-                break
-        # print(_, x, y)
-        if all_flag:
-            break
-    return tmp_list
 
 def get_dict_neighbourhood_score(local_model, node1, node2):
     try:
@@ -143,46 +108,6 @@ def get_dict_AUC(model, true_edges, false_edges):
     y_scores = np.array(prediction_list)
     # print(y_true)
     # print(y_scores)
-    return roc_auc_score(y_true, y_scores)
-
-def get_neighbourhood_score(local_model, node1, node2):
-    try:
-        vector1 = local_model.wv.vectors[local_model.wv.index2word.index(node1)]
-        vector2 = local_model.wv.vectors[local_model.wv.index2word.index(node2)]
-        return np.dot(vector1, vector2) / (np.linalg.norm(vector1) * np.linalg.norm(vector2))
-    except:
-        return 2+random.random()
-
-def get_AUC(model, true_edges, false_edges):
-    true_list = list()
-    prediction_list = list()
-    for edge in true_edges:
-        tmp_score = get_neighbourhood_score(model, str(edge[0]), str(edge[1]))
-        true_list.append(1)
-        # prediction_list.append(tmp_score)
-        # for the unseen pair, we randomly give a prediction
-        if tmp_score > 2:
-            if tmp_score > 2.5:
-                prediction_list.append(1)
-            else:
-                prediction_list.append(-1)
-        else:
-            prediction_list.append(tmp_score)
-
-    for edge in false_edges:
-        tmp_score = get_neighbourhood_score(model, str(edge[0]), str(edge[1]))
-        true_list.append(0)
-        # prediction_list.append(tmp_score)
-        # for the unseen pair, we randomly give a prediction
-        if tmp_score > 2:
-            if tmp_score > 2.5:
-                prediction_list.append(1)
-            else:
-                prediction_list.append(-1)
-        else:
-            prediction_list.append(tmp_score)
-    y_true = np.array(true_list)
-    y_scores = np.array(prediction_list)
     return roc_auc_score(y_true, y_scores)
 
 def generate_pairs(all_walks, vocab):
@@ -441,80 +366,31 @@ def train_model(network_data, feature_dic, log_name):
 
 if __name__ == "__main__":
     args = parse_args()
-    # logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
     file_name = args.input
-    print(file_name)
-    edge_data_by_type, _, all_nodes = load_network_data(file_name)
+    print(args)
     if args.features:
         feature_dic = np.load(args.features)[()]
     else:
         feature_dic = None
 
-    # In our experiment, we use 5-fold cross-validation, but you can change that
+    # In our experiment, we use 5-fold cross-validation
     number_of_groups = 5
-    edge_data_by_type_by_group = dict()
-    for edge_type in edge_data_by_type:
-        all_data = edge_data_by_type[edge_type]
-        separated_data = divide_data(all_data, number_of_groups)
-        edge_data_by_type_by_group[edge_type] = separated_data
 
     overall_MNE_performance = list()
 
     for i in range(number_of_groups):
-        training_data_by_type = dict()
-        evaluation_data_by_type = dict()
-        for edge_type in edge_data_by_type_by_group:
-            training_data_by_type[edge_type] = list()
-            evaluation_data_by_type[edge_type] = list()
-            for j in range(number_of_groups):
-                if j == i:
-                    for tmp_edge in edge_data_by_type_by_group[edge_type][j]:
-                        evaluation_data_by_type[edge_type].append((tmp_edge[0], tmp_edge[1]))
-                else:
-                    for tmp_edge in edge_data_by_type_by_group[edge_type][j]:
-                        training_data_by_type[edge_type].append((tmp_edge[0], tmp_edge[1]))
-        base_edges = list()
-        training_nodes = list()
-        for edge_type in training_data_by_type:
-            for edge in training_data_by_type[edge_type]:
-                base_edges.append(edge)
-                training_nodes.append(edge[0])
-                training_nodes.append(edge[1])
-        training_nodes = list(set(training_nodes))
-        training_data_by_type['Base'] = base_edges
+        training_data_by_type = load_training_data(file_name.split('.')[0] + '/train_%d.txt' % i)
+
         MNE_model = train_model(training_data_by_type, feature_dic, file_name.split('/')[-1].split('.')[0] + '_' + str(i) + '_' + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 
         tmp_MNE_performance = 0
-
-        merged_networks = dict()
-        merged_networks['training'] = dict()
-        merged_networks['test_true'] = dict()
-        merged_networks['test_false'] = dict()
-        for edge_type in training_data_by_type:
-            if edge_type == 'Base':
-                continue
+        testing_true_data_by_edge, testing_false_data_by_edge = load_testing_data(file_name.split('.')[0] + '/test_%d.txt' % i)
+        for edge_type in testing_true_data_by_edge:
             print('We are working on edge:', edge_type)
-            selected_true_edges = list()
-            tmp_training_nodes = list()
-            for edge in training_data_by_type[edge_type]:
-                tmp_training_nodes.append(edge[0])
-                tmp_training_nodes.append(edge[1])
-            tmp_training_nodes = set(tmp_training_nodes)
-            for edge in evaluation_data_by_type[edge_type]:
-                if edge[0] in tmp_training_nodes and edge[1] in tmp_training_nodes:
-                    if edge[0] == edge[1]:
-                        continue
-                    selected_true_edges.append(edge)
-            if len(selected_true_edges) == 0:
-                continue
-            selected_false_edges = randomly_choose_false_edges(training_nodes, edge_data_by_type[edge_type], len(selected_true_edges) * 5)
-            print('number of info network edges:', len(training_data_by_type[edge_type]))
-            print('number of evaluation true edges:', len(selected_true_edges))
-            print('number of evaluation false edges:', len(selected_false_edges))
-            merged_networks['training'][edge_type] = set(training_data_by_type[edge_type])
-            merged_networks['test_true'][edge_type] = selected_true_edges
-            merged_networks['test_false'][edge_type] = selected_false_edges
-
+            print('number of training edges:', len(training_data_by_type[edge_type]))
+            print('number of testing true edges:', len(testing_true_data_by_edge[edge_type]))
+            print('number of testing false edges:', len(testing_false_data_by_edge[edge_type]))
+           
             local_model = dict()
             for pos in range(len(MNE_model['index2word'])):
                 # 0.5 is the weight parameter mentioned in the paper, which is used to show how important each relation type is and can be tuned based on the network.
@@ -522,25 +398,22 @@ if __name__ == "__main__":
                 local_model[node] = MNE_model[edge_type][pos]
                 if feature_dic:
                     local_model[node] = local_model[node] + 0.5 * np.dot(feature_dic[node], MNE_model['fea_tran'])
-            tmp_MNE_score = get_dict_AUC(local_model, selected_true_edges, selected_false_edges)
+            tmp_MNE_score = get_dict_AUC(local_model, testing_true_data_by_edge[edge_type], testing_false_data_by_edge[edge_type])
             
             tmp_MNE_performance += tmp_MNE_score
             print('MNE score:', tmp_MNE_score)
 
-        print('MNE performance:', tmp_MNE_performance / (len(training_data_by_type)-1))
+        print('MNE performance:', tmp_MNE_performance / (len(testing_true_data_by_edge)))
        
-        overall_MNE_performance.append(tmp_MNE_performance / (len(training_data_by_type)-1))
+        overall_MNE_performance.append(tmp_MNE_performance / (len(testing_true_data_by_edge)))
 
     overall_MNE_performance = np.asarray(overall_MNE_performance)
    
     print('Overall MNE AUC:', overall_MNE_performance)
-
     print('')
 
     print('Overall MNE AUC:', np.mean(overall_MNE_performance))
-
     print('')
 
     print('Overall MNE std:', np.std(overall_MNE_performance))
-
     print('end')
