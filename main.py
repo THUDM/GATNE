@@ -16,7 +16,7 @@ from sklearn.metrics import roc_auc_score
 from gensim.models import Word2Vec
 from gensim.models.keyedvectors import Vocab
 
-import Random_walk
+from walk import RandomWalk
 from utils import *
 
 def parse_args():
@@ -89,8 +89,8 @@ def randomly_choose_false_edges(nodes, true_edges, num):
     for _ in range(num):
         trial = 0
         while True:
-            x = nodes[random.randint(0, len(nodes))]
-            y = nodes[random.randint(0, len(nodes))]
+            x = nodes[random.randint(0, len(nodes)-1)]
+            y = nodes[random.randint(0, len(nodes)-1)]
             trial += 1
             if trial >= 1000:
                 all_flag = True
@@ -248,10 +248,8 @@ def train_deepwalk_embedding(walks, iteration=None):
 
 def train_model(network_data, feature_dic, log_name):
     base_network = network_data['Base']
-    base_G = Random_walk.RWGraph(get_G_from_edges(base_network), False, 1, 1)
-    print('finish building the graph')
-    base_G.preprocess_transition_probs()
-    base_walks = base_G.simulate_walks(20, 10)
+    base_walker = RandomWalk(get_G_from_edges(base_network), walk_length=10, num_walks=20, workers=4)
+    base_walks = base_walker.simulate_walks()
     # all_walks = [base_walks]
     all_walks = []
     edge_types = list(network_data.keys())
@@ -261,9 +259,8 @@ def train_model(network_data, feature_dic, log_name):
 
         tmp_data = network_data[layer_id]
         # start to do the random walk on a layer
-        layer_G = Random_walk.RWGraph(get_G_from_edges(tmp_data), False, 1, 1)
-        layer_G.preprocess_transition_probs()
-        layer_walks = layer_G.simulate_walks(20, 10)
+        layer_walker = RandomWalk(get_G_from_edges(tmp_data), walk_length=10, num_walks=20, workers=4)
+        layer_walks = layer_walker.simulate_walks()
         all_walks.append(layer_walks)
 
 
@@ -385,13 +382,6 @@ def train_model(network_data, feature_dic, log_name):
                 avg_loss += loss_value
 
                 if i % 1000 == 0:
-                    # tmp_node_embeddings = sess.run(node_embeddings)
-                    # if feature_dic:
-                    #     tmp_feature_weights = sess.run(feature_weights)
-                    # else:
-                    #     tmp_feature_weights = None
-                    # auc = evaluate(tmp_node_embeddings, tmp_feature_weights)
-
                     post_fix = {
                         "epoch": epoch,
                         "iter": i,
@@ -444,43 +434,8 @@ def train_model(network_data, feature_dic, log_name):
     if feature_dic:
         final_model['fea_tran'] = final_feature_weights
 
-    final_model['addition'] = {}
-    final_model['tran'] = {}
     for edge_type in range(edge_type_count):
-        final_model['addition'][edge_types[edge_type]] = final_type_embeddings[edge_type * num_nodes: (edge_type + 1) * num_nodes,:]
-        final_model['tran'][edge_types[edge_type]] = final_trans_weights[edge_type,:,:]
-
-    # def plot_with_labels(low_dim_embs, labels, filename):
-    #     assert low_dim_embs.shape[0] >= len(labels), 'More labels than embeddings'
-    #     plt.figure(figsize=(18, 18))  # in inches
-    #     for i, label in enumerate(labels):
-    #         x, y = low_dim_embs[i, :]
-    #         plt.scatter(x, y)
-    #         plt.annotate(
-    #             label,
-    #             xy=(x, y),
-    #             xytext=(5, 2),
-    #             textcoords='offset points',
-    #             ha='right',
-    #             va='bottom')
-
-    #     plt.savefig(filename)
-
-    # try:
-    #     from sklearn.manifold import TSNE
-    #     import matplotlib.pyplot as plt
-
-    #     tsne = TSNE(
-    #         perplexity=30, n_components=2, init='pca', n_iter=1000, method='barnes_hut')
-    #     plot_only = min(num_nodes, 500)
-    #     low_dim_embs = tsne.fit_transform(final_node_embeddings[:plot_only, :])
-    #     labels = [index2word[i] for i in range(plot_only)]
-    #     plot_with_labels(low_dim_embs, labels, os.path.join('./', log_name + '_tsne.png'))
-    # except ImportError as ex:
-    #     print('Please install sklearn, matplotlib, and scipy to show embeddings.')
-    #     print(ex)
-    
-    # return node2vec_model
+        final_model[edge_types[edge_type]] = final_node_embeddings + 0.5 * np.matmul(final_type_embeddings[edge_type * num_nodes: (edge_type + 1) * num_nodes,:], final_trans_weights[edge_type])
 
     return final_model
 
@@ -564,12 +519,10 @@ if __name__ == "__main__":
             for pos in range(len(MNE_model['index2word'])):
                 # 0.5 is the weight parameter mentioned in the paper, which is used to show how important each relation type is and can be tuned based on the network.
                 node = MNE_model['index2word'][pos]
-                local_model[node] = MNE_model['base'][pos] + 0.5 * np.dot(MNE_model['addition'][edge_type][pos], MNE_model['tran'][edge_type])
+                local_model[node] = MNE_model[edge_type][pos]
                 if feature_dic:
                     local_model[node] = local_model[node] + 0.5 * np.dot(feature_dic[node], MNE_model['fea_tran'])
-                # local_model[MNE_model['index2word'][pos]] = MNE_model['base'][pos]
             tmp_MNE_score = get_dict_AUC(local_model, selected_true_edges, selected_false_edges)
-            # tmp_MNE_score = get_AUC(MNE_model['addition'][edge_type], selected_true_edges, selected_false_edges)
             
             tmp_MNE_performance += tmp_MNE_score
             print('MNE score:', tmp_MNE_score)

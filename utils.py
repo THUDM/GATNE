@@ -9,7 +9,8 @@ def get_G_from_edges(edges):
             edge_dict[edge_key] = 1
         else:
             edge_dict[edge_key] += 1
-    tmp_G = nx.DiGraph()
+    # tmp_G = nx.DiGraph()
+    tmp_G = nx.Graph()
     for edge_key in edge_dict:
         weight = edge_dict[edge_key]
         x = edge_key.split('_')[0]
