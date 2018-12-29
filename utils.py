@@ -19,6 +19,30 @@ def get_G_from_edges(edges):
         tmp_G[x][y]['weight'] = weight
     return tmp_G
 
+def load_network_data(f_name):
+    # This function is used to load multiplex data
+    print('We are loading data from:', f_name)
+    edge_data_by_type = dict()
+    all_edges = list()
+    all_nodes = list()
+    with open(f_name, 'r') as f:
+        for line in f:
+            words = line[:-1].split(' ')
+            if words[0] not in edge_data_by_type:
+                edge_data_by_type[words[0]] = list()
+            x, y = words[1], words[2]
+            edge_data_by_type[words[0]].append((x, y))
+            all_edges.append((x, y))
+            all_nodes.append(x)
+            all_nodes.append(y)
+    all_nodes = list(set(all_nodes))
+    # create common layer.
+    all_edges = list(set(all_edges))
+    edge_data_by_type['Base'] = all_edges
+    print('total nodes: ' + str(len(all_nodes)))
+    print('Finish loading data')
+    return edge_data_by_type, all_edges, all_nodes
+
 
 def load_training_data(f_name):
     print('We are loading training data from:', f_name)
