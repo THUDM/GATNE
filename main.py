@@ -12,13 +12,12 @@ import tensorflow as tf
 
 from collections import defaultdict
 from six import iteritems
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, f1_score
 import sklearn.preprocessing
 from gensim.models import Word2Vec
 from gensim.models.keyedvectors import Vocab
 
 from walk import RandomWalk
-import Random_walk
 from utils import *
 
 def parse_args():
@@ -78,68 +77,35 @@ def get_dict_neighbourhood_score(local_model, node1, node2):
         vector1 = local_model[node1]
         vector2 = local_model[node2]
         return np.dot(vector1, vector2) / (np.linalg.norm(vector1) * np.linalg.norm(vector2))
-    except:
-        return 2+random.random()
+    except Exception as e:
+        print(e)
 
 
 def get_dict_AUC(model, true_edges, false_edges):
     true_list = list()
     prediction_list = list()
-    allpos = 0
     for edge in true_edges:
         tmp_score = get_dict_neighbourhood_score(model, str(edge[0]), str(edge[1]))
         true_list.append(1)
-        # prediction_list.append(tmp_score)
-        # for the unseen pair, we randomly give a prediction
-        if tmp_score > 2:
-            if tmp_score > 2.5:
-                prediction_list.append(0)
-            else:
-                prediction_list.append(0)
-            # prediction_list.append(random.uniform(-1,1))
-        else:
-            prediction_list.append(tmp_score)
-            allpos += 1
-    allneg = 0
+        prediction_list.append(tmp_score)
+
     for edge in false_edges:
         tmp_score = get_dict_neighbourhood_score(model, str(edge[0]), str(edge[1]))
         true_list.append(0)
-        # prediction_list.append(tmp_score)
-        # for the unseen pair, we randomly give a prediction
-        if tmp_score > 2:
-            if tmp_score > 2.5:
-                prediction_list.append(0)
-            else:
-                prediction_list.append(0)
-        #    prediction_list.append(random.uniform(-1,1))
-        else:
-            prediction_list.append(tmp_score)
-            allneg += 1
+        prediction_list.append(tmp_score)
 
-    sorted_pred=prediction_list[:]
+    sorted_pred = prediction_list[:]
     sorted_pred.sort()
-    median=sum(sorted_pred)/(allpos+allneg+0.0)
-    for i in range(len(prediction_list)):
-        if prediction_list[i]==0: # for =0 things, we give it to median
-            prediction_list[i]=median + random.uniform(-1e-4,1e-4)
-    sorted_pred=prediction_list[:]
-    sorted_pred.sort()
-    threshold=sorted_pred[-allpos]
-    correct, fcorrect = 0, 0
-    for i in range(len(prediction_list)):
-        if prediction_list[i]>threshold:
-            if true_list[i]==1:
-                correct+=1
-            else:
-                fcorrect+=1
+    threshold = sorted_pred[-len(true_edges)]
 
-    precision=correct/(allpos+0.0)
-    recall=correct/(correct+fcorrect+0.0)
-    f1=2*precision*recall/(precision+recall)
+    y_pred = np.zeros(len(prediction_list), dtype=np.int32)
+    for i in range(len(prediction_list)):
+        if prediction_list[i] >= threshold:
+            y_pred[i] = 1
 
     y_true = np.array(true_list)
     y_scores = np.array(prediction_list)
-    return roc_auc_score(y_true, y_scores),precision,recall,f1
+    return roc_auc_score(y_true, y_scores), f1_score(y_true, y_pred)
 
 def generate_pairs(all_walks, vocab):
     pairs = []
@@ -202,41 +168,37 @@ def train_deepwalk_embedding(walks, iteration=None):
     model = Word2Vec(walks, size=200, window=5, min_count=0, sg=1, workers=5, iter=iteration)
     return model
 
-def train_model(network_data, feature_dic, log_name):
+def generate_walks(network_data):
     base_network = network_data['Base']
-    # base_G = Random_walk.RWGraph(get_G_from_edges(base_network), False, 1, 1)
-    # base_G.preprocess_transition_probs()
-    # base_walks = base_G.simulate_walks(20, 10)
     base_walker = RandomWalk(get_G_from_edges(base_network), walk_length=10, num_walks=20, workers=4)
     base_walks = base_walker.simulate_walks()
-    # all_walks = [base_walks]
+
     all_walks = []
-    edge_types = list(network_data.keys())
     for layer_id in network_data:
         if layer_id == 'Base':
             continue
 
         tmp_data = network_data[layer_id]
         # start to do the random walk on a layer
-        # layer_G = Random_walk.RWGraph(get_G_from_edges(tmp_data), False, 1, 1)
-        # layer_G.preprocess_transition_probs()
-        # layer_walks = layer_G.simulate_walks(20, 10)
         layer_walker = RandomWalk(get_G_from_edges(tmp_data), walk_length=10, num_walks=20, workers=4)
         layer_walks = layer_walker.simulate_walks()
         all_walks.append(layer_walks)
 
-
     print('finish generating the walks')
+
+    return base_walks, all_walks
+
+def train_model(network_data, feature_dic, log_name):
+    base_walks, all_walks = generate_walks(network_data)
 
     vocab, index2word = generate_vocab([base_walks])
 
-    # node2vec_model = train_deepwalk_embedding(all_walks[0])
-
-    train_pairs_base = generate_pairs([base_walks], vocab)
     train_pairs = generate_pairs(all_walks, vocab)
 
+    edge_types = list(network_data.keys())
+
     num_nodes = len(index2word)
-    edge_type_count = len(all_walks)
+    edge_type_count = len(edge_types) - 1
     epochs = args.epoch
     batch_size = args.batch_size
     embedding_size = 200 # Dimension of the embedding vector.
@@ -254,7 +216,6 @@ def train_model(network_data, feature_dic, log_name):
                 features[index2word.index(key), :] = np.array(value)
 
     with graph.as_default():
-        global_step_base = tf.Variable(0, name='global_step_base', trainable=False)
         global_step = tf.Variable(0, name='global_step', trainable=False)
 
         if feature_dic:
@@ -291,25 +252,14 @@ def train_model(network_data, feature_dic, log_name):
             node_feat = tf.nn.embedding_lookup(node_features, train_inputs)
             node_embed = node_embed + 0.5 * tf.matmul(node_feat, my_norm(feature_weights))
 
-        node_embed_base = tf.nn.l2_normalize(node_embed, axis = 1)
         node_embed = tf.nn.l2_normalize(node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
         # node_embed = tf.nn.l2_normalize(tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
-        # node_embed_base = node_embed
         # node_embed = node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, my_norm(trans_w)), [-1, embedding_size])
 
         tmp_w = [tf.nn.embedding_lookup(trans_weights, i) for i in range(edge_type_count)]
         tmp_w = [tf.cond(tf.norm(tmp_w[i]) < tf.constant(1000.0), lambda: tmp_w[i], lambda: tmp_w[i] / (tf.norm(tmp_w[i]) / 1000.0)) for i in range(edge_type_count)]
-        # update = tf.assign(trans_weights, [tmp_w[i] / (tf.norm(tmp_w[i]) / 100.0) for i in range(edge_type_count)])
         update = tf.assign(trans_weights, tmp_w)
 
-        loss_base = tf.reduce_mean(
-            tf.nn.nce_loss(
-                weights=nce_weights,
-                biases=nce_biases,
-                labels=train_labels,
-                inputs=node_embed_base,
-                num_sampled=num_sampled,
-                num_classes=num_nodes))
         loss = tf.reduce_mean(
             tf.nn.nce_loss(
                 weights=nce_weights,
@@ -319,17 +269,13 @@ def train_model(network_data, feature_dic, log_name):
                 num_sampled=num_sampled,
                 num_classes=num_nodes))
 
-        plot_loss_base = tf.summary.scalar("loss_base", loss_base)
         plot_loss = tf.summary.scalar("loss", loss)
 
         # Optimizer.
-        optimizer_base = tf.train.AdamOptimizer().minimize(loss_base, global_step=global_step_base)
         optimizer = tf.train.AdamOptimizer().minimize(loss, global_step=global_step)
 
         # Add ops to save and restore all the variables.
         # saver = tf.train.Saver(max_to_keep=20)
-
-        # merged = tf.summary.merge_all()
 
         # Initializing the variables
         init = tf.global_variables_initializer()
@@ -341,38 +287,7 @@ def train_model(network_data, feature_dic, log_name):
         writer = tf.summary.FileWriter("./runs/" + log_name, sess.graph) # tensorboard --logdir=./runs
         sess.run(init)
 
-        # print(sess.run(update))
-        # exit()
-        print('Base Training')
-        iter = 0
-        for epoch in range(0):
-            random.shuffle(train_pairs_base)
-            batches = get_batches(train_pairs_base, batch_size)
-
-            data_iter = tqdm.tqdm(enumerate(batches),
-                                desc="EP:%d" % (epoch),
-                                total=len(batches),
-                                bar_format="{l_bar}{r_bar}")
-            avg_loss = 0.0
-
-            for i, data in data_iter:
-                feed_dict = {train_inputs: data[0], train_labels: data[1], train_types: data[2]}
-                _, loss_value, summary_str = sess.run([optimizer_base, loss_base, plot_loss_base], feed_dict)
-                writer.add_summary(summary_str, iter)
-                iter += 1
-
-                avg_loss += loss_value
-
-                if i % 1000 == 0:
-                    post_fix = {
-                        "epoch": epoch,
-                        "iter": i,
-                        "avg_loss": avg_loss / (i + 1),
-                        "loss": loss_value
-                    }
-                    data_iter.write(str(post_fix))
-
-        print('Training for Each Type')
+        print('Training')
         iter = 0
         for epoch in range(epochs):
             random.shuffle(train_pairs)
@@ -423,47 +338,23 @@ def train_model(network_data, feature_dic, log_name):
     return final_model
 
 def train_model_new(network_data, feature_dic, log_name):
-    base_network = network_data['Base']
-    # base_G = Random_walk.RWGraph(get_G_from_edges(base_network), False, 1, 1)
-    # base_G.preprocess_transition_probs()
-    # base_walks = base_G.simulate_walks(20, 10)
-    base_walker = RandomWalk(get_G_from_edges(base_network), walk_length=10, num_walks=20, workers=4)
-    base_walks = base_walker.simulate_walks()
-    # all_walks = [base_walks]
-    all_walks = []
-    edge_types = list(network_data.keys())
-    for layer_id in network_data:
-        if layer_id == 'Base':
-            continue
-
-        tmp_data = network_data[layer_id]
-        # start to do the random walk on a layer
-        # layer_G = Random_walk.RWGraph(get_G_from_edges(tmp_data), False, 1, 1)
-        # layer_G.preprocess_transition_probs()
-        # layer_walks = layer_G.simulate_walks(20, 10)
-        layer_walker = RandomWalk(get_G_from_edges(tmp_data), walk_length=10, num_walks=20, workers=4)
-        layer_walks = layer_walker.simulate_walks()
-        all_walks.append(layer_walks)
-
-
-    print('finish generating the walks')
+    base_walks, all_walks = generate_walks(network_data)
 
     vocab, index2word = generate_vocab([base_walks])
 
-    # node2vec_model = train_deepwalk_embedding(all_walks[0])
-
-    train_pairs_base = generate_pairs([base_walks], vocab)
     train_pairs = generate_pairs(all_walks, vocab)
 
+    edge_types = list(network_data.keys())
+
     num_nodes = len(index2word)
-    edge_type_count = len(all_walks)
+    edge_type_count = len(edge_types) - 1
     epochs = args.epoch
     batch_size = args.batch_size
     embedding_size = 200 # Dimension of the embedding vector.
-    embedding_u_size = 200
+    embedding_u_size = 10
     u_num = 2 # edge_type_count
     num_sampled = 5 # Number of negative examples to sample.
-    dim_a = 10
+    dim_a = 20
     att_head = 1
 
     graph = tf.Graph()
@@ -476,9 +367,7 @@ def train_model_new(network_data, feature_dic, log_name):
             if key in index2word:
                 features[index2word.index(key), :] = np.array(value)
         
-
     with graph.as_default():
-        global_step_base = tf.Variable(0, name='global_step_base', trainable=False)
         global_step = tf.Variable(0, name='global_step', trainable=False)
 
         if feature_dic:
@@ -508,9 +397,6 @@ def train_model_new(network_data, feature_dic, log_name):
         trans_w_s1 = tf.nn.embedding_lookup(trans_weights_s1, train_types)
         trans_w_s2 = tf.nn.embedding_lookup(trans_weights_s2, train_types)
 
-        # Compute the softmax loss, using a sample of the negative labels each time.
-        # loss_node2vec = tf.reduce_mean(tf.nn.sampled_softmax_loss(softmax_weights, softmax_biases,node_embed, train_labels, num_sampled, num_nodes))
-
         if feature_dic:
             node_feat = tf.nn.embedding_lookup(node_features, train_inputs)
             node_embed = node_embed + 0.5 * tf.matmul(node_feat, feature_weights)
@@ -519,18 +405,9 @@ def train_model_new(network_data, feature_dic, log_name):
         # attention = tf.reshape(tf.nn.softmax(tf.reshape(tf.matmul(node_type_embed, trans_w_s1), [-1, u_num])), [-1, 1, u_num])
         node_type_embed = tf.matmul(attention, node_type_embed)
 
-        node_embed_base = tf.nn.l2_normalize(node_embed, axis = 1)
-        # node_embed = tf.nn.l2_normalize(node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
-        node_embed = tf.nn.l2_normalize(tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
+        node_embed = tf.nn.l2_normalize(node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
+        # node_embed = tf.nn.l2_normalize(tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
 
-        loss_base = tf.reduce_mean(
-            tf.nn.nce_loss(
-                weights=nce_weights,
-                biases=nce_biases,
-                labels=train_labels,
-                inputs=node_embed_base,
-                num_sampled=num_sampled,
-                num_classes=num_nodes))
         loss = tf.reduce_mean(
             tf.nn.nce_loss(
                 weights=nce_weights,
@@ -539,17 +416,13 @@ def train_model_new(network_data, feature_dic, log_name):
                 inputs=node_embed,
                 num_sampled=num_sampled,
                 num_classes=num_nodes))
-        plot_loss_base = tf.summary.scalar("loss_base", loss_base)
         plot_loss = tf.summary.scalar("loss", loss)
 
         # Optimizer.
-        optimizer_base = tf.train.AdamOptimizer().minimize(loss_base, global_step=global_step_base)
         optimizer = tf.train.AdamOptimizer().minimize(loss, global_step=global_step)
 
         # Add ops to save and restore all the variables.
         # saver = tf.train.Saver(max_to_keep=20)
-
-        # merged = tf.summary.merge_all()
 
         # Initializing the variables
         init = tf.global_variables_initializer()
@@ -561,37 +434,7 @@ def train_model_new(network_data, feature_dic, log_name):
         writer = tf.summary.FileWriter("./runs/" + log_name, sess.graph) # tensorboard --logdir=./runs
         sess.run(init)
 
-        # print(sess.run(node_embeddings))
-        print('Base Training')
-        iter = 0
-        for epoch in range(0):
-            random.shuffle(train_pairs_base)
-            batches = get_batches(train_pairs_base, batch_size)
-
-            data_iter = tqdm.tqdm(enumerate(batches),
-                                desc="EP:%d" % (epoch),
-                                total=len(batches),
-                                bar_format="{l_bar}{r_bar}")
-            avg_loss = 0.0
-
-            for i, data in data_iter:
-                feed_dict = {train_inputs: data[0], train_labels: data[1], train_types: data[2]}
-                _, loss_value, summary_str = sess.run([optimizer_base, loss_base, plot_loss_base], feed_dict)
-                writer.add_summary(summary_str, iter)
-                iter += 1
-
-                avg_loss += loss_value
-
-                if i % 1000 == 0:
-                    post_fix = {
-                        "epoch": epoch,
-                        "iter": i,
-                        "avg_loss": avg_loss / (i + 1),
-                        "loss": loss_value
-                    }
-                    data_iter.write(str(post_fix))
-
-        print('Training for Each Type')
+        print('Training')
         iter = 0
         for epoch in range(epochs):
             random.shuffle(train_pairs)
@@ -647,8 +490,6 @@ def train_model_new(network_data, feature_dic, log_name):
         # att = np.reshape(softmax(np.reshape(np.matmul(tmp, final_trans_weights_s2[edge_type,:,:]), [-1, edge_type_count])), [-1, 1, edge_type_count])
         att = np.reshape(softmax(np.reshape(np.matmul(tmp, final_trans_weights_s2[edge_type,:,:]), [-1, u_num])), [-1, att_head, u_num])
 
-        # print(edge_type, att)
-
         # final_model['addition'][edge_types[edge_type]] = np.reshape(np.matmul(att, final_type_embeddings), [-1, att_head, embedding_u_size])
         # final_model['tran'][edge_types[edge_type]] = final_trans_weights[edge_type,:,:]
 
@@ -703,15 +544,15 @@ if __name__ == "__main__":
                 local_model[node] = MNE_model[edge_type][pos]
                 if feature_dic:
                     local_model[node] = local_model[node] + 0.5 * np.dot(feature_dic[node], MNE_model['fea_tran'])
-            tmp_MNE_score,precision,recall,f1 = get_dict_AUC(local_model, testing_true_data_by_edge[edge_type], testing_false_data_by_edge[edge_type])
+            tmp_MNE_score, f1 = get_dict_AUC(local_model, testing_true_data_by_edge[edge_type], testing_false_data_by_edge[edge_type])
             
             tmp_MNE_performance += tmp_MNE_score
             tmp_MNE_f1 += f1
             print('score:', tmp_MNE_score)
-            print('precision,recall,f1:', precision,recall,f1)
+            print('f1:', f1)
 
-        print('performance:', tmp_MNE_performance / (len(testing_true_data_by_edge)))
-        print('f1:', tmp_MNE_f1 / (len(testing_true_data_by_edge)))
+        print('average score:', tmp_MNE_performance / (len(testing_true_data_by_edge)))
+        print('average f1:', tmp_MNE_f1 / (len(testing_true_data_by_edge)))
        
         overall_MNE_performance.append(tmp_MNE_performance / (len(testing_true_data_by_edge)))
         overall_MNE_f1.append(tmp_MNE_f1 / (len(testing_true_data_by_edge)))
