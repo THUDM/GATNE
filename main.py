@@ -12,12 +12,13 @@ import tensorflow as tf
 
 from collections import defaultdict
 from six import iteritems
-from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 import sklearn.preprocessing
 from gensim.models import Word2Vec
 from gensim.models.keyedvectors import Vocab
 
-from walk import RandomWalk
+# from walk import RWGraph
+from walk_n import RWGraph
 from utils import *
 
 def parse_args():
@@ -38,8 +39,14 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=64,
                         help='Number of batch_size. Default is 64.')
 
+    parser.add_argument('--eval_type', type=str, default='all',
+                        help='The edge type for evaluation.')
+
     parser.add_argument('--dimensions', type=int, default=200,
                         help='Number of dimensions. Default is 200.')
+
+    parser.add_argument('--meta_dim', type=int, default=10,
+                        help='Number of meta dimensions. Default is 10.')
 
     parser.add_argument('--walk-length', type=int, default=10,
                         help='Length of walk per source. Default is 10.')
@@ -105,7 +112,8 @@ def get_dict_AUC(model, true_edges, false_edges):
 
     y_true = np.array(true_list)
     y_scores = np.array(prediction_list)
-    return roc_auc_score(y_true, y_scores), f1_score(y_true, y_pred)
+    ps, rs, _ = precision_recall_curve(y_true, y_scores)
+    return roc_auc_score(y_true, y_scores), f1_score(y_true, y_pred), auc(rs, ps)
 
 def generate_pairs(all_walks, vocab):
     pairs = []
@@ -162,16 +170,20 @@ def get_batches(pairs, batch_size):
         result.append((np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32)))
     return result
 
-def train_deepwalk_embedding(walks, iteration=None):
-    if iteration is None:
-        iteration = 10 # original iter 100
-    model = Word2Vec(walks, size=200, window=5, min_count=0, sg=1, workers=5, iter=iteration)
-    return model
-
 def generate_walks(network_data):
     base_network = network_data['Base']
-    base_walker = RandomWalk(get_G_from_edges(base_network), walk_length=10, num_walks=20, workers=4)
-    base_walks = base_walker.simulate_walks()
+    # base_walker = RWGraph(get_G_from_edges(base_network), walk_length=args.walk_length, num_walks=args.num_walks, workers=8, temp_folder='./tmp')
+    # base_walks = base_walker.simulate_walks()
+    
+    # base_walks = list(get_G_from_edges(base_network).edges)
+    # base_walks.extend([(y, x) for (x, y) in base_walks])
+    
+    # base_walker = RWGraph(get_G_from_edges(base_network), False, 1, 1)
+    # base_walker.preprocess_transition_probs()
+    # base_walks = base_walker.simulate_walks(args.num_walks, args.walk_length)
+
+    base_walker = RWGraph(get_G_from_edges(base_network))
+    base_walks = base_walker.simulate_walks(args.num_walks, args.walk_length)
 
     all_walks = []
     for layer_id in network_data:
@@ -180,8 +192,19 @@ def generate_walks(network_data):
 
         tmp_data = network_data[layer_id]
         # start to do the random walk on a layer
-        layer_walker = RandomWalk(get_G_from_edges(tmp_data), walk_length=10, num_walks=20, workers=4)
-        layer_walks = layer_walker.simulate_walks()
+        # layer_walker = RWGraph(get_G_from_edges(tmp_data), walk_length=args.walk_length, num_walks=args.num_walks, workers=8, temp_folder='./tmp')
+        # layer_walks = layer_walker.simulate_walks()
+        
+        # layer_walks = list(get_G_from_edges(tmp_data).edges)
+        # layer_walks.extend([(y, x) for (x, y) in layer_walks])
+
+        # layer_walker = RWGraph(get_G_from_edges(tmp_data), False, 1, 1)
+        # layer_walker.preprocess_transition_probs()
+        # layer_walks = layer_walker.simulate_walks(args.num_walks, args.walk_length)
+
+        layer_walker = RWGraph(get_G_from_edges(tmp_data))
+        layer_walks = layer_walker.simulate_walks(args.num_walks, args.walk_length)
+
         all_walks.append(layer_walks)
 
     print('finish generating the walks')
@@ -204,6 +227,25 @@ def train_model(network_data, feature_dic, log_name):
     embedding_size = 200 # Dimension of the embedding vector.
     embedding_u_size = 10
     num_sampled = 5 # Number of negative examples to sample.
+
+    neighbor_samples = 10
+
+    neighbors = [[] for _ in range(num_nodes * edge_type_count)]
+    for r in range(edge_type_count):
+        g = network_data[edge_types[r]]
+        for (x, y) in g:
+            ix = vocab[x].index
+            iy = vocab[y].index
+            neighbors[ix * edge_type_count + r].append(iy * edge_type_count + r)
+            neighbors[iy * edge_type_count + r].append(ix * edge_type_count + r)
+        for i in range(num_nodes):
+            j = i * edge_type_count + r
+            if len(neighbors[j]) == 0:
+                neighbors[j] = [i] * neighbor_samples
+            elif len(neighbors[j]) < neighbor_samples:
+                neighbors[j].extend(list(np.random.choice(neighbors[j], size=neighbor_samples-len(neighbors[j]))))
+            elif len(neighbors[j]) > neighbor_samples:
+                neighbors[j] = list(np.random.choice(neighbors[j], size=neighbor_samples))
 
     graph = tf.Graph()
 
@@ -229,6 +271,8 @@ def train_model(network_data, feature_dic, log_name):
         nce_weights = tf.Variable(tf.truncated_normal([num_nodes, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
         nce_biases = tf.Variable(tf.zeros([num_nodes]))
 
+        node_neighbors = tf.Variable(neighbors, trainable=False)
+
         # Input data and re-orgenize size.
         train_inputs = tf.placeholder(tf.int32, shape=[None])
         train_labels = tf.placeholder(tf.int32, shape=[None, 1])
@@ -236,10 +280,17 @@ def train_model(network_data, feature_dic, log_name):
         
         # Look up embeddings for words.
         node_embed = tf.nn.embedding_lookup(node_embeddings, train_inputs)
-        node_type_embed = tf.reshape(tf.nn.embedding_lookup(node_type_embeddings, train_inputs + train_types * num_nodes), [-1, 1, embedding_u_size])
         trans_w = tf.nn.embedding_lookup(trans_weights, train_types)
         # Compute the softmax loss, using a sample of the negative labels each time.
         # loss_node2vec = tf.reduce_mean(tf.nn.sampled_softmax_loss(softmax_weights, softmax_biases,node_embed, train_labels, num_sampled, num_nodes))
+
+        if args.method == 0:
+            node_type_embed = tf.reshape(tf.nn.embedding_lookup(node_type_embeddings, train_inputs + train_types * num_nodes), [-1, 1, embedding_u_size])
+        else:
+            node_neigh = tf.nn.embedding_lookup(node_neighbors, train_inputs + train_types * num_nodes)
+
+            node_embed_neighbors = tf.nn.embedding_lookup(node_type_embeddings, node_neigh)
+            node_type_embed = tf.reshape(tf.reduce_mean(node_embed_neighbors, axis=1), [-1, 1, embedding_u_size])
 
         def my_norm(x):
             # return tf.nn.l2_normalize(x, axis=2)
@@ -250,22 +301,25 @@ def train_model(network_data, feature_dic, log_name):
 
         if feature_dic:
             node_feat = tf.nn.embedding_lookup(node_features, train_inputs)
-            node_embed = node_embed + 0.5 * tf.matmul(node_feat, my_norm(feature_weights))
+            node_embed = node_embed + tf.matmul(node_feat, my_norm(feature_weights))
 
-        node_embed = tf.nn.l2_normalize(node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
+        # node_embed = tf.nn.l2_normalize(node_embed + tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
         # node_embed = tf.nn.l2_normalize(tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
-        # node_embed = node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, my_norm(trans_w)), [-1, embedding_size])
+        node_embed = node_embed + tf.reshape(tf.matmul(node_type_embed, my_norm(trans_w)), [-1, embedding_size])
 
         tmp_w = [tf.nn.embedding_lookup(trans_weights, i) for i in range(edge_type_count)]
         tmp_w = [tf.cond(tf.norm(tmp_w[i]) < tf.constant(1000.0), lambda: tmp_w[i], lambda: tmp_w[i] / (tf.norm(tmp_w[i]) / 1000.0)) for i in range(edge_type_count)]
         update = tf.assign(trans_weights, tmp_w)
+
+        last_node_embed = node_embed
+        # last_node_embed = tf.nn.l2_normalize(node_embed, axis=1)
 
         loss = tf.reduce_mean(
             tf.nn.nce_loss(
                 weights=nce_weights,
                 biases=nce_biases,
                 labels=train_labels,
-                inputs=node_embed,
+                inputs=last_node_embed,
                 num_sampled=num_sampled,
                 num_classes=num_nodes))
 
@@ -282,6 +336,7 @@ def train_model(network_data, feature_dic, log_name):
 
     # Launch the graph
     print("Optimizing")
+    last_score = 0
     with tf.Session(graph=graph) as sess:
         log_dir = "./log/" 
         writer = tf.summary.FileWriter("./runs/" + log_name, sess.graph) # tensorboard --logdir=./runs
@@ -307,7 +362,7 @@ def train_model(network_data, feature_dic, log_name):
 
                 avg_loss += loss_value
 
-                if i % 1000 == 0:
+                if i % 5000 == 0:
                     post_fix = {
                         "epoch": epoch,
                         "iter": i,
@@ -316,26 +371,43 @@ def train_model(network_data, feature_dic, log_name):
                     }
                     data_iter.write(str(post_fix))
 
-                # sess.run(update)
+                sess.run(update)
+            
+            final_model = dict(zip(edge_types[:-1], [dict() for _ in range(edge_type_count)]))
+            for i in range(edge_type_count):
+                for j in range(num_nodes):
+                    final_model[edge_types[i]][index2word[j]] = np.array(sess.run(last_node_embed, {train_inputs: [j], train_types: [i]})[0])
+            valid_aucs, valid_f1s, valid_prs = [], [], []
+            test_aucs, test_f1s, test_prs = [], [], []
+            for i in range(edge_type_count):
+                if args.eval_type == 'all' or edge_types[i] in args.eval_type.split(','):
+                    tmp_auc, tmp_f1, tmp_pr = get_dict_AUC(final_model[edge_types[i]], valid_true_data_by_edge[edge_types[i]], valid_false_data_by_edge[edge_types[i]])
+                    valid_aucs.append(tmp_auc)
+                    valid_f1s.append(tmp_f1)
+                    valid_prs.append(tmp_pr)
 
-        final_node_embeddings, final_type_embeddings, final_trans_weights = sess.run([node_embeddings, node_type_embeddings, trans_weights])
-        if feature_dic:
-            final_feature_weights = sess.run(feature_weights)
+                    tmp_auc, tmp_f1, tmp_pr = get_dict_AUC(final_model[edge_types[i]], testing_true_data_by_edge[edge_types[i]], testing_false_data_by_edge[edge_types[i]])
+                    test_aucs.append(tmp_auc)
+                    test_f1s.append(tmp_f1)
+                    test_prs.append(tmp_pr)
+            print('valid auc:', np.mean(valid_aucs))
+            print('valid pr', np.mean(valid_prs))
+            print('valid f1:', np.mean(valid_f1s))
 
+            average_auc = np.mean(test_aucs)
+            average_f1 = np.mean(test_f1s)
+            average_pr = np.mean(test_prs)
+            print('test auc:', average_auc)
+            print('test pr:', average_pr)
+            print('test f1:', average_f1)
 
-    final_model = dict()
-    # print(final_node_embeddings)
-    final_model['base'] = final_node_embeddings
-    final_model['index2word'] = index2word
-    if feature_dic:
-        final_model['fea_tran'] = final_feature_weights
-        # final_model['fea_tran'] = sklearn.preprocessing.normalize(final_feature_weights, axis=0)
+            cur_score = np.mean(valid_aucs)
+            if cur_score < last_score and epoch >= 4:
+                break
+            last_score = cur_score
+    
+    return average_auc, average_f1, average_pr
 
-    for edge_type in range(edge_type_count):
-        final_model[edge_types[edge_type]] = final_node_embeddings + 0.5 * np.matmul(final_type_embeddings[edge_type * num_nodes: (edge_type + 1) * num_nodes,:], final_trans_weights[edge_type])
-        # final_model[edge_types[edge_type]] = final_node_embeddings + 0.5 * np.matmul(final_type_embeddings[edge_type * num_nodes: (edge_type + 1) * num_nodes,:], sklearn.preprocessing.normalize(final_trans_weights[edge_type], axis=1))
-
-    return final_model
 
 def train_model_new(network_data, feature_dic, log_name):
     base_walks, all_walks = generate_walks(network_data)
@@ -351,11 +423,31 @@ def train_model_new(network_data, feature_dic, log_name):
     epochs = args.epoch
     batch_size = args.batch_size
     embedding_size = 200 # Dimension of the embedding vector.
-    embedding_u_size = 10
-    u_num = 2 # edge_type_count
+    feature_size = 20
+    embedding_u_size = args.meta_dim
+    u_num = edge_type_count # 2
     num_sampled = 5 # Number of negative examples to sample.
     dim_a = 20
     att_head = 1
+    neighbor_samples = 10
+
+    neighbors = [[[] for __ in range(edge_type_count)] for _ in range(num_nodes)]
+    for r in range(edge_type_count):
+        g = network_data[edge_types[r]]
+        for (x, y) in g:
+            ix = vocab[x].index
+            iy = vocab[y].index
+            neighbors[ix][r].append(iy)
+            neighbors[iy][r].append(ix)
+        for i in range(num_nodes):
+            if len(neighbors[i][r]) == 0:
+                neighbors[i][r] = [i] * neighbor_samples
+            elif len(neighbors[i][r]) < neighbor_samples:
+                neighbors[i][r].extend(list(np.random.choice(neighbors[i][r], size=neighbor_samples-len(neighbors[i][r]))))
+            elif len(neighbors[i][r]) > neighbor_samples:
+                neighbors[i][r] = list(np.random.choice(neighbors[i][r], size=neighbor_samples))
+
+    # neighbors = [[[_] for __ in range(edge_type_count)] for _ in range(num_nodes)]
 
     graph = tf.Graph()
 
@@ -372,16 +464,23 @@ def train_model_new(network_data, feature_dic, log_name):
 
         if feature_dic:
             node_features = tf.Variable(features, name='node_features', trainable=False)
-            feature_weights = tf.Variable(tf.truncated_normal([feature_dim, embedding_size], stddev=1.0))
+            feature_weights = tf.Variable(tf.truncated_normal([feature_dim, embedding_size], stddev=1.0)) # embedding_size
+            linear = tf.layers.Dense(units=embedding_size, activation=tf.nn.tanh, use_bias=True)
+
+            embed_trans = tf.Variable(tf.truncated_normal([feature_dim, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
+            u_embed_trans = tf.Variable(tf.truncated_normal([edge_type_count, feature_dim, embedding_u_size], stddev=1.0 / math.sqrt(embedding_size)))
 
         # Parameters to learn
         node_embeddings = tf.Variable(tf.random_uniform([num_nodes, embedding_size], -1.0, 1.0))
         node_type_embeddings = tf.Variable(tf.random_uniform([num_nodes, u_num, embedding_u_size], -1.0, 1.0))
         trans_weights = tf.Variable(tf.truncated_normal([edge_type_count, embedding_u_size, embedding_size // att_head], stddev=1.0 / math.sqrt(embedding_size)))
+        # trans_weights_o = tf.Variable(tf.truncated_normal([edge_type_count, embedding_u_size, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
         trans_weights_s1 = tf.Variable(tf.truncated_normal([edge_type_count, embedding_u_size, dim_a], stddev=1.0 / math.sqrt(embedding_size)))
         trans_weights_s2 = tf.Variable(tf.truncated_normal([edge_type_count, dim_a, att_head], stddev=1.0 / math.sqrt(embedding_size)))
         nce_weights = tf.Variable(tf.truncated_normal([num_nodes, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
         nce_biases = tf.Variable(tf.zeros([num_nodes]))
+
+        node_neighbors = tf.Variable(neighbors, trainable=False)
 
         # Input data and re-orgenize size.
         train_inputs = tf.placeholder(tf.int32, shape=[None])
@@ -390,33 +489,78 @@ def train_model_new(network_data, feature_dic, log_name):
         train_types = tf.placeholder(tf.int32, shape=[None])
         
         # Look up embeddings for words.
-        node_embed = tf.nn.embedding_lookup(node_embeddings, train_inputs)
-        node_type_embed = tf.nn.embedding_lookup(node_type_embeddings, train_inputs)
-        # node_type_embed = tf.nn.embedding_lookup(node_type_embeddings, train_zero_inputs)
+        if feature_dic:
+            node_embed = tf.nn.embedding_lookup(node_features, train_inputs)
+            node_embed = tf.matmul(node_embed, embed_trans)
+        else:
+            node_embed = tf.nn.embedding_lookup(node_embeddings, train_inputs)
+        # node_embed_label = tf.nn.embedding_lookup(node_embeddings, tf.reshape(train_labels, [-1]))
+        # node_type_embed = tf.nn.embedding_lookup(node_type_embeddings, train_inputs)
+        # node_type_embed_o = tf.nn.embedding_lookup(tf.reshape(node_type_embeddings, [-1, embedding_u_size]), train_inputs * u_num + train_types)
+        # node_type_embed_label = tf.nn.embedding_lookup(node_type_embeddings, tf.reshape(train_labels, [-1]))
+        
+        if args.method == 1 or args.method == 4:
+            node_neigh = tf.nn.embedding_lookup(node_neighbors, train_inputs)
+            if feature_dic:
+                node_embed_neighbors = tf.nn.embedding_lookup(node_features, node_neigh)
+                node_embed_tmp = tf.concat([tf.matmul(tf.reshape(tf.slice(node_embed_neighbors, [0, i, 0, 0], [-1, 1, -1, -1]), [-1, feature_dim]), tf.reshape(tf.slice(u_embed_trans, [i, 0, 0], [1, -1, -1]), [feature_dim, embedding_u_size])) for i in range(edge_type_count)], axis=0)
+                # node_embed_tmp = tf.matmul(tf.reshape(node_embed_neighbors, []), u_embed_trans)
+                node_type_embed = tf.transpose(tf.reduce_mean(tf.reshape(node_embed_tmp, [edge_type_count, -1, neighbor_samples, embedding_u_size]), axis=2), perm=[1,0,2])
+            else:
+                node_embed_neighbors = tf.nn.embedding_lookup(node_type_embeddings, node_neigh)
+                node_embed_tmp = tf.concat([tf.reshape(tf.slice(node_embed_neighbors, [0, i, 0, i, 0], [-1, 1, -1, 1, -1]), [1, -1, neighbor_samples, embedding_u_size]) for i in range(edge_type_count)], axis=0)
+                node_type_embed = tf.transpose(tf.reduce_mean(node_embed_tmp, axis=2), perm=[1,0,2])
+
+                if args.method == 4:
+                    node_type_embed = tf.nn.embedding_lookup(tf.reshape(node_type_embed, [-1, embedding_u_size]), train_types + tf.range(tf.shape(train_types)[0]) * edge_type_count)
+        elif args.method == 3:
+            node_type_embed = tf.nn.embedding_lookup(node_type_embeddings, train_inputs)
+            
+        # node_type_embed = tf.nn.embedding_lookup(node_type_embeddings, train_inputs)
+
         trans_w = tf.nn.embedding_lookup(trans_weights, train_types)
         trans_w_s1 = tf.nn.embedding_lookup(trans_weights_s1, train_types)
         trans_w_s2 = tf.nn.embedding_lookup(trans_weights_s2, train_types)
+        # trans_w_o = tf.nn.embedding_lookup(trans_weights_o, train_types)
+        
+        if args.method != 4:
+            attention = tf.reshape(tf.nn.softmax(tf.reshape(tf.matmul(tf.tanh(tf.matmul(node_type_embed, trans_w_s1)), trans_w_s2), [-1, u_num])), [-1, att_head, u_num])
+            # attention = tf.reshape(tf.nn.softmax(tf.reshape(tf.matmul(node_type_embed, trans_w_s1), [-1, u_num])), [-1, 1, u_num])
+            node_type_embed = tf.matmul(attention, node_type_embed)
+        else:
+            node_type_embed = tf.reshape(node_type_embed, [-1, 1, embedding_u_size])
+
+        # attention_label = tf.reshape(tf.nn.softmax(tf.reshape(tf.matmul(tf.tanh(tf.matmul(node_type_embed_label, trans_w_s1)), trans_w_s2), [-1, u_num])), [-1, att_head, u_num])
+        # node_type_embed_label = tf.matmul(attention_label, node_type_embed_label)
+
+        # node_embed + tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size])
+        node_embed = node_embed + tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size])# + tf.reshape(tf.matmul(tf.reshape(node_type_embed_o, [-1, 1, embedding_u_size]), trans_w_o), [-1, embedding_size])
+        # node_embed = tf.nn.l2_normalize(tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
+
+        # node_embed_label = tf.nn.l2_normalize(node_embed_label + tf.reshape(tf.matmul(node_type_embed_label, trans_w), [-1, embedding_size]))
 
         if feature_dic:
             node_feat = tf.nn.embedding_lookup(node_features, train_inputs)
-            node_embed = node_embed + 0.5 * tf.matmul(node_feat, feature_weights)
+            node_embed = node_embed + tf.matmul(node_feat, feature_weights)
+            # node_embed = linear(tf.concat([node_embed, node_feat], axis=1))
+            # node_embed = tf.matmul(node_feat, feature_weights)
 
-        attention = tf.reshape(tf.nn.softmax(tf.reshape(tf.matmul(tf.tanh(tf.matmul(node_type_embed, trans_w_s1)), trans_w_s2), [-1, u_num])), [-1, att_head, u_num])
-        # attention = tf.reshape(tf.nn.softmax(tf.reshape(tf.matmul(node_type_embed, trans_w_s1), [-1, u_num])), [-1, 1, u_num])
-        node_type_embed = tf.matmul(attention, node_type_embed)
-
-        node_embed = tf.nn.l2_normalize(node_embed + 0.5 * tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
-        # node_embed = tf.nn.l2_normalize(tf.reshape(tf.matmul(node_type_embed, trans_w), [-1, embedding_size]), axis = 1)
+        last_node_embed = tf.nn.l2_normalize(node_embed, axis=1)
 
         loss = tf.reduce_mean(
             tf.nn.nce_loss(
                 weights=nce_weights,
                 biases=nce_biases,
                 labels=train_labels,
-                inputs=node_embed,
+                inputs=last_node_embed,
                 num_sampled=num_sampled,
                 num_classes=num_nodes))
         plot_loss = tf.summary.scalar("loss", loss)
+
+        # loss2 = -tf.reduce_mean(tf.reduce_sum(tf.multiply(last_node_embed, node_embed_label), axis=-1))
+        # plot_loss2 = tf.summary.scalar("loss2", loss2)
+
+        # plot_loss_all = tf.summary.scalar("loss_all", loss + loss2)
 
         # Optimizer.
         optimizer = tf.train.AdamOptimizer().minimize(loss, global_step=global_step)
@@ -424,11 +568,14 @@ def train_model_new(network_data, feature_dic, log_name):
         # Add ops to save and restore all the variables.
         # saver = tf.train.Saver(max_to_keep=20)
 
+        merged = tf.summary.merge_all(key=tf.GraphKeys.SUMMARIES)
+
         # Initializing the variables
         init = tf.global_variables_initializer()
 
     # Launch the graph
     print("Optimizing")
+    last_score = 0
     with tf.Session(graph=graph) as sess:
         log_dir = "./log/"
         writer = tf.summary.FileWriter("./runs/" + log_name, sess.graph) # tensorboard --logdir=./runs
@@ -448,13 +595,16 @@ def train_model_new(network_data, feature_dic, log_name):
 
             for i, data in data_iter:
                 feed_dict = {train_inputs: data[0], train_labels: data[1], train_types: data[2]}
-                _, loss_value, summary_str = sess.run([optimizer, loss, plot_loss], feed_dict)
+                _, loss_value, summary_str = sess.run([optimizer, loss, merged], feed_dict)
                 writer.add_summary(summary_str, iter)
+                # writer.add_summary(summary_str2, iter)
+                # writer.add_summary(summary_str3, iter)
+
                 iter += 1
 
                 avg_loss += loss_value
 
-                if i % 1000 == 0:
+                if i % 5000 == 0:
                     post_fix = {
                         "epoch": epoch,
                         "iter": i,
@@ -462,110 +612,73 @@ def train_model_new(network_data, feature_dic, log_name):
                         "loss": loss_value
                     }
                     data_iter.write(str(post_fix))
+            
+            final_model = dict(zip(edge_types[:-1], [dict() for _ in range(edge_type_count)]))
+            for i in range(edge_type_count):
+                for j in range(num_nodes):
+                    final_model[edge_types[i]][index2word[j]] = np.array(sess.run(last_node_embed, {train_inputs: [j], train_types: [i]})[0])
+            valid_aucs, valid_f1s, valid_prs = [], [], []
+            test_aucs, test_f1s, test_prs = [], [], []
+            for i in range(edge_type_count):
+                if args.eval_type == 'all' or edge_types[i] in args.eval_type.split(','):
+                    tmp_auc, tmp_f1, tmp_pr = get_dict_AUC(final_model[edge_types[i]], valid_true_data_by_edge[edge_types[i]], valid_false_data_by_edge[edge_types[i]])
+                    valid_aucs.append(tmp_auc)
+                    valid_f1s.append(tmp_f1)
+                    valid_prs.append(tmp_pr)
 
-        final_node_embeddings, final_type_embeddings = sess.run([node_embeddings, node_type_embeddings])
-        # final_type_embeddings = [final_type_embeddings[0] for _ in range(final_type_embeddings.shape[0])]
-        final_trans_weights, final_trans_weights_s1, final_trans_weights_s2 = sess.run([trans_weights, trans_weights_s1, trans_weights_s2])
-        if feature_dic:
-            final_feature_weights = sess.run(feature_weights)
+                    tmp_auc, tmp_f1, tmp_pr = get_dict_AUC(final_model[edge_types[i]], testing_true_data_by_edge[edge_types[i]], testing_false_data_by_edge[edge_types[i]])
+                    test_aucs.append(tmp_auc)
+                    test_f1s.append(tmp_f1)
+                    test_prs.append(tmp_pr)
+            print('valid auc:', np.mean(valid_aucs))
+            print('valid pr', np.mean(valid_prs))
+            print('valid f1:', np.mean(valid_f1s))
 
-    final_model = dict()
-    # print(final_node_embeddings)
-    final_model['base'] = final_node_embeddings
-    final_model['index2word'] = index2word
-    if feature_dic:
-        final_model['fea_tran'] = final_feature_weights
+            average_auc = np.mean(test_aucs)
+            average_f1 = np.mean(test_f1s)
+            average_pr = np.mean(test_prs)
+            print('test auc:', average_auc)
+            print('test pr:', average_pr)
+            print('test f1:', average_f1)
 
-    def softmax(x):
-        """Compute softmax values for each sets of scores in x."""
-        e_x = np.exp(x - np.max(x))
-        e_sum = e_x.sum(axis=-1)
-        e_sum = np.reshape(e_sum, [len(e_sum), 1])
-        return e_x / e_sum
+            cur_score = np.mean(valid_aucs)
+            # if cur_score < last_score and epoch >= 4:
+            #     break
+            last_score = cur_score
+    
+    return average_auc, average_f1, average_pr
 
-    # final_model['addition'] = {}
-    # final_model['tran'] = {}
-    for edge_type in range(edge_type_count):
-        tmp = np.tanh(np.matmul(np.reshape(final_type_embeddings, [-1, embedding_u_size]), final_trans_weights_s1[edge_type,:,:]))
-        # att = np.reshape(softmax(np.reshape(np.matmul(tmp, final_trans_weights_s2[edge_type,:,:]), [-1, edge_type_count])), [-1, 1, edge_type_count])
-        att = np.reshape(softmax(np.reshape(np.matmul(tmp, final_trans_weights_s2[edge_type,:,:]), [-1, u_num])), [-1, att_head, u_num])
-
-        # final_model['addition'][edge_types[edge_type]] = np.reshape(np.matmul(att, final_type_embeddings), [-1, att_head, embedding_u_size])
-        # final_model['tran'][edge_types[edge_type]] = final_trans_weights[edge_type,:,:]
-
-        addition = np.reshape(np.matmul(att, final_type_embeddings), [-1, embedding_u_size])
-
-        # print(np.linalg.norm(final_node_embeddings))
-        # print(np.linalg.norm(np.reshape(np.matmul(addition, final_trans_weights[edge_type]), [-1, embedding_size])))
-        # print(np.dot(final_node_embeddings, np.reshape(np.matmul(addition, final_trans_weights[edge_type]), [-1, embedding_size])))
-
-        final_model[edge_types[edge_type]] = final_node_embeddings + 0.5 * np.reshape(np.matmul(addition, final_trans_weights[edge_type]), [-1, embedding_size])
-        # final_model[edge_types[edge_type]] = np.reshape(np.matmul(addition, final_trans_weights[edge_type]), [-1, embedding_size])
-    return final_model
-
+   
 if __name__ == "__main__":
     args = parse_args()
     file_name = args.input
     print(args)
     if args.features:
-        feature_dic = np.load(args.features)[()]
+        feature_dic = {}
+        with open(args.features, 'r') as f:
+            first = True
+            for line in f:
+                if first:
+                    first = False
+                    continue
+                items = line.strip().split()
+                feature_dic[items[0]] = items[1:]
+        # feature_dic = np.load(args.features)[()]
     else:
         feature_dic = None
 
-    log_name = file_name.split('/')[-1].split('.')[0] + '_method:%d' % args.method + '_b:%d' % args.batch_size + '_e:%d' % args.epoch
+    log_name = file_name.split('/')[-1].split('.')[0] + '_method:%d' % args.method + '_eval-type:%s' % args.eval_type + '_b:%d' % args.batch_size + '_e:%d' % args.epoch
 
-    # In our experiment, we use 5-fold cross-validation
-    number_of_groups = 5
+    training_data_by_type = load_training_data(file_name.split('.')[0] + '/train.txt')
+    valid_true_data_by_edge, valid_false_data_by_edge = load_testing_data(file_name.split('.')[0] + '/valid.txt')
+    testing_true_data_by_edge, testing_false_data_by_edge = load_testing_data(file_name.split('.')[0] + '/test.txt')
 
-    overall_MNE_performance = list()
-    overall_MNE_f1 = list()
+    if args.method == 0 or args.method == 2:
+        average_auc, average_f1, average_pr = train_model(training_data_by_type, feature_dic, log_name + '_' + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
+    else:
+        average_auc, average_f1, average_pr = train_model_new(training_data_by_type, feature_dic, log_name + '_' + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 
-    for i in range(number_of_groups):
-        training_data_by_type = load_training_data(file_name.split('.')[0] + '/train_%d.txt' % i)
-
-        if args.method == 0:
-            MNE_model = train_model(training_data_by_type, feature_dic, log_name + '_fold:' + str(i) + '_' + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
-        else:
-            MNE_model = train_model_new(training_data_by_type, feature_dic, log_name + '_fold:' + str(i) + '_' + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
-
-        tmp_MNE_performance = 0
-        tmp_MNE_f1 = 0
-        testing_true_data_by_edge, testing_false_data_by_edge = load_testing_data(file_name.split('.')[0] + '/test_%d.txt' % i)
-        for edge_type in testing_true_data_by_edge:
-            print('We are working on edge:', edge_type)
-            print('number of training edges:', len(training_data_by_type[edge_type]))
-            print('number of testing true edges:', len(testing_true_data_by_edge[edge_type]))
-            print('number of testing false edges:', len(testing_false_data_by_edge[edge_type]))
-           
-            local_model = dict()
-            for pos in range(len(MNE_model['index2word'])):
-                # 0.5 is the weight parameter mentioned in the paper, which is used to show how important each relation type is and can be tuned based on the network.
-                node = MNE_model['index2word'][pos]
-                local_model[node] = MNE_model[edge_type][pos]
-                if feature_dic:
-                    local_model[node] = local_model[node] + 0.5 * np.dot(feature_dic[node], MNE_model['fea_tran'])
-            tmp_MNE_score, f1 = get_dict_AUC(local_model, testing_true_data_by_edge[edge_type], testing_false_data_by_edge[edge_type])
-            
-            tmp_MNE_performance += tmp_MNE_score
-            tmp_MNE_f1 += f1
-            print('score:', tmp_MNE_score)
-            print('f1:', f1)
-
-        print('average score:', tmp_MNE_performance / (len(testing_true_data_by_edge)))
-        print('average f1:', tmp_MNE_f1 / (len(testing_true_data_by_edge)))
-       
-        overall_MNE_performance.append(tmp_MNE_performance / (len(testing_true_data_by_edge)))
-        overall_MNE_f1.append(tmp_MNE_f1 / (len(testing_true_data_by_edge)))
-
-    overall_MNE_performance = np.asarray(overall_MNE_performance)
-    overall_MNE_f1 = np.asarray(overall_MNE_f1)
-   
-    print('Overall AUC:', overall_MNE_performance)
-    print('Overall AUC:', np.mean(overall_MNE_performance))
-    print('Overall std:', np.std(overall_MNE_performance))
-    print('')
-
-    print('Overall F1:', overall_MNE_f1)
-    print('Overall F1:', np.mean(overall_MNE_f1))
-    print('Overall std F1:', np.std(overall_MNE_f1))
-    print('end')
+    print('Overall ROC-AUC:', average_auc)
+    print('Overall PR-AUC', average_pr)
+    print('Overall F1:', average_f1)
+  

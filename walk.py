@@ -4,9 +4,9 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 import networkx as nx
 from parallel import parallel_generate_walks
+import os
 
-
-class RandomWalk:
+class RWGraph:
     FIRST_TRAVEL_KEY = 'first_travel_key'
     PROBABILITIES_KEY = 'probabilities'
     NEIGHBORS_KEY = 'neighbors'
@@ -17,9 +17,9 @@ class RandomWalk:
     Q_KEY = 'q'
 
     def __init__(self, graph, walk_length=80, num_walks=10, p=1, q=1, weight_key='weight',
-                 workers=1, sampling_strategy=None, quiet=False):
+                 workers=1, sampling_strategy=None, quiet=False, temp_folder=None):
         """
-        Initiates the RandomWalk object, precomputes walking probabilities and generates the walks.
+        Initiates the RWGraph object, precomputes walking probabilities and generates the walks.
         :param graph: Input graph
         :type graph: Networkx Graph
         :param walk_length: Number of nodes in each walk (default: 80)
@@ -50,6 +50,15 @@ class RandomWalk:
             self.sampling_strategy = {}
         else:
             self.sampling_strategy = sampling_strategy
+        
+        self.temp_folder, self.require = None, None
+        if temp_folder:
+            if not os.path.isdir(temp_folder):
+                raise NotADirectoryError("temp_folder does not exist or is not a directory. ({})".format(temp_folder))
+
+            self.temp_folder = temp_folder
+            self.require = "sharedmem"
+
         self.d_graph = self._precompute_probabilities()
 
     def simulate_walks(self):
@@ -128,19 +137,34 @@ class RandomWalk:
         # Split num_walks for each worker
         num_walks_lists = np.array_split(range(self.num_walks), self.workers)
 
-        walk_results = Parallel(n_jobs=self.workers)(delayed(parallel_generate_walks)(self.d_graph,
-                                                                                      self.walk_length,
-                                                                                      len(num_walks),
-                                                                                      idx,
-                                                                                      self.sampling_strategy,
-                                                                                      self.NUM_WALKS_KEY,
-                                                                                      self.WALK_LENGTH_KEY,
-                                                                                      self.NEIGHBORS_KEY,
-                                                                                      self.PROBABILITIES_KEY,
-                                                                                      self.FIRST_TRAVEL_KEY,
-                                                                                      self.quiet) for
-                                                     idx, num_walks
-                                                     in enumerate(num_walks_lists, 1))
+        # walk_results = Parallel(n_jobs=self.workers)(delayed(parallel_generate_walks)(self.d_graph,
+        #                                                                               self.walk_length,
+        #                                                                               len(num_walks),
+        #                                                                               idx,
+        #                                                                               self.sampling_strategy,
+        #                                                                               self.NUM_WALKS_KEY,
+        #                                                                               self.WALK_LENGTH_KEY,
+        #                                                                               self.NEIGHBORS_KEY,
+        #                                                                               self.PROBABILITIES_KEY,
+        #                                                                               self.FIRST_TRAVEL_KEY,
+        #                                                                               self.quiet) for
+        #                                              idx, num_walks
+        #                                              in enumerate(num_walks_lists, 1))
+        
+        walk_results = Parallel(n_jobs=self.workers, temp_folder=self.temp_folder, require=self.require)(
+            delayed(parallel_generate_walks)(self.d_graph,
+                                             self.walk_length,
+                                             len(num_walks),
+                                             idx,
+                                             self.sampling_strategy,
+                                             self.NUM_WALKS_KEY,
+                                             self.WALK_LENGTH_KEY,
+                                             self.NEIGHBORS_KEY,
+                                             self.PROBABILITIES_KEY,
+                                             self.FIRST_TRAVEL_KEY,
+                                             self.quiet) for
+            idx, num_walks
+            in enumerate(num_walks_lists, 1))
 
         walks = flatten(walk_results)
 
@@ -149,5 +173,5 @@ class RandomWalk:
 if __name__ == "__main__":
     g = nx.Graph()
     g.add_edges_from([(1,2),(2,3)])
-    rw = RandomWalk(g, 5, 3)
+    rw = RWGraph(g, 5, 3)
     print(rw.simulate_walks())
