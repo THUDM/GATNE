@@ -19,14 +19,14 @@ from utils import *
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--input', nargs='?', default='data/amazon_sss',
-                        help='Input graph path')
+    parser.add_argument('--input', type=str, default='data/amazon',
+                        help='Input dataset path')
     
-    parser.add_argument('--features', nargs='?', default=None,
-                        help='Input node features (npy)')
+    parser.add_argument('--features', type=str, default=None,
+                        help='Input node features')
 
-    parser.add_argument('--epoch', type=int, default=10,
-                        help='Number of epoch. Default is 10.')
+    parser.add_argument('--epoch', type=int, default=100,
+                        help='Number of epoch. Default is 100.')
 
     parser.add_argument('--batch-size', type=int, default=64,
                         help='Number of batch_size. Default is 64.')
@@ -400,13 +400,13 @@ if __name__ == "__main__":
     else:
         feature_dic = None
 
-    log_name = file_name.split('/')[-1] + '_eval-type:%s' % args.eval_type + '_b:%d' % args.batch_size + '_e:%d' % args.epoch
+    log_name = file_name.split('/')[-1] + f'_evaltype_{args.eval_type}_b_{args.batch_size}_e_{args.epoch}'
 
     training_data_by_type = load_training_data(file_name + '/train.txt')
     valid_true_data_by_edge, valid_false_data_by_edge = load_testing_data(file_name + '/valid.txt')
     testing_true_data_by_edge, testing_false_data_by_edge = load_testing_data(file_name + '/test.txt')
 
-    average_auc, average_f1, average_pr = train_model(training_data_by_type, feature_dic, log_name + '_' + time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
+    average_auc, average_f1, average_pr = train_model(training_data_by_type, feature_dic, log_name + '_' + time.strftime('%Y-%m-%d %H-%M-%S',time.localtime(time.time())))
 
     print('Overall ROC-AUC:', average_auc)
     print('Overall PR-AUC', average_pr)

@@ -34,7 +34,6 @@ def load_training_data(f_name):
             all_nodes.append(x)
             all_nodes.append(y)
     all_nodes = list(set(all_nodes))
-    # create common layer.
     all_edges = list(set(all_edges))
     edge_data_by_type['Base'] = all_edges
     print('total training nodes: ' + str(len(all_nodes)))
@@ -63,7 +62,6 @@ def load_testing_data(f_name):
             all_nodes.append(x)
             all_nodes.append(y)
     all_nodes = list(set(all_nodes))
-    print('total testing nodes: ' + str(len(all_nodes)))
     print('Finish loading testing data')
     return true_edge_data_by_type, false_edge_data_by_type
 
