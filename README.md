@@ -50,11 +50,9 @@ If you're in regions where Dropbox are blocked (e.g. Mainland China), try `pytho
 
 You can use `./scripts/run_example.sh` or `python src/main.py --input example_data` to train GATNE-T model on the example data. (If you share the server with others or you want to use the specific GPU(s), you may need to set `CUDA_VISIBLE_DEVICES`.) 
 
-If you want to train on the Amazon dataset, you can run `python src/main.py --input data/amazon` or `python src/main.py --input data/amazon --features data/feature.txt` to train GATNE-T model or GATNE-I model, respectively. 
+If you want to train on the Amazon dataset, you can run `python src/main.py --input data/amazon` or `python src/main.py --input data/amazon --features data/amazon/feature.txt` to train GATNE-T model or GATNE-I model, respectively. 
 
-You can use the following commands to train GATNE-T on Twitter and YouTube datasets. We only evaluate the edges of the first edge type on Twitter dataset as the number of edges of other edge types is too small.
-`python src/main.py --input data/twitter --eval-type 1`
-`python src/main.py --input data/youtube`
+You can use the following commands to train GATNE-T on Twitter and YouTube datasets: `python src/main.py --input data/twitter --eval-type 1` or `python src/main.py --input data/youtube`. We only evaluate the edges of the first edge type on Twitter dataset as the number of edges of other edge types is too small.
 
 As Twitter and YouTube datasets do not have node attributes, you can generate heuristic features for them, such as DeepWalk embeddings. Then you can train GATNE-I model on these two datasets by adding the `--features` argument.
 
