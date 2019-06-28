@@ -1,20 +1,22 @@
+import argparse
+import math
 import os
 import sys
-import math
-import argparse
-import tqdm
 import time
-import numpy as np
-from numpy import random
-import tensorflow as tf
-
 from collections import defaultdict
-from six import iteritems
-from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
-from gensim.models.keyedvectors import Vocab
 
+import numpy as np
+import tensorflow as tf
+import tqdm
+from gensim.models.keyedvectors import Vocab
+from numpy import random
+from six import iteritems
+from sklearn.metrics import (auc, f1_score, precision_recall_curve,
+                             roc_auc_score)
+
+from utils import *
 from walk import RWGraph
-from utils import * 
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -411,4 +413,3 @@ if __name__ == "__main__":
     print('Overall ROC-AUC:', average_auc)
     print('Overall PR-AUC', average_pr)
     print('Overall F1:', average_f1)
-  

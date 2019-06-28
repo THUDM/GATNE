@@ -1,6 +1,7 @@
-import numpy as np
-import networkx as nx
 import random
+
+import networkx as nx
+import numpy as np
 
 
 class RWGraph():
@@ -43,5 +44,3 @@ class RWGraph():
                     walks.append(self.walk(walk_length=walk_length, start=node, schema=schema))
 
         return walks
-
-
