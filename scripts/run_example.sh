@@ -1,1 +1,1 @@
-python src/main.py --input example_data
+python src/main.py --input data/example
