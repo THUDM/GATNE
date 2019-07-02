@@ -124,6 +124,5 @@ dmypy.json
 .pyre/
 
 .vscode
-data/
 runs/
 src/__pycache__
