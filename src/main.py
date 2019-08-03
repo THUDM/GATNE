@@ -138,12 +138,12 @@ def generate_vocab(all_walks):
     
     return vocab, index2word
 
-def get_batches(pairs, batch_size):
+def get_batches(pairs, neighbors, batch_size):
     n_batches = (len(pairs) + (batch_size - 1)) // batch_size
 
-    result = []
+    # result = []
     for idx in range(n_batches):
-        x, y, t = [], [], []
+        x, y, t, neigh = [], [], [], []
         for i in range(batch_size):
             index = idx * batch_size + i
             if index >= len(pairs):
@@ -151,8 +151,10 @@ def get_batches(pairs, batch_size):
             x.append(pairs[index][0])
             y.append(pairs[index][1])
             t.append(pairs[index][2])
-        result.append((np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32)))
-    return result
+            neigh.append(neighbors[pairs[index][0]])
+        # result.append((np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32), np.array(neigh).astype(np.int32)))
+        yield (np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32), np.array(neigh).astype(np.int32)) 
+    # return result
 
 def generate_walks(network_data):
     base_network = network_data['Base']
@@ -178,7 +180,7 @@ def generate_walks(network_data):
 
         all_walks.append(layer_walks)
 
-    print('finish generating the walks')
+    print('Finish generating the walks')
 
     return base_walks, all_walks
 
@@ -250,12 +252,13 @@ def train_model(network_data, feature_dic, log_name):
         nce_weights = tf.Variable(tf.truncated_normal([num_nodes, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
         nce_biases = tf.Variable(tf.zeros([num_nodes]))
 
-        node_neighbors = tf.Variable(neighbors, trainable=False)
+        # node_neighbors = tf.Variable(neighbors, trainable=False)
 
         # Input data
         train_inputs = tf.placeholder(tf.int32, shape=[None])
         train_labels = tf.placeholder(tf.int32, shape=[None, 1])
         train_types = tf.placeholder(tf.int32, shape=[None])
+        node_neigh = tf.placeholder(tf.int32, shape=[None, edge_type_count, neighbor_samples])
         
         # Look up embeddings for nodes
         if feature_dic is not None:
@@ -264,7 +267,7 @@ def train_model(network_data, feature_dic, log_name):
         else:
             node_embed = tf.nn.embedding_lookup(node_embeddings, train_inputs)
         
-        node_neigh = tf.nn.embedding_lookup(node_neighbors, train_inputs)
+        # node_neigh = tf.nn.embedding_lookup(node_neighbors, train_inputs)
         if feature_dic is not None:
             node_embed_neighbors = tf.nn.embedding_lookup(node_features, node_neigh)
             node_embed_tmp = tf.concat([tf.matmul(tf.reshape(tf.slice(node_embed_neighbors, [0, i, 0, 0], [-1, 1, -1, -1]), [-1, feature_dim]), tf.reshape(tf.slice(u_embed_trans, [i, 0, 0], [1, -1, -1]), [feature_dim, embedding_u_size])) for i in range(edge_type_count)], axis=0)
@@ -322,16 +325,17 @@ def train_model(network_data, feature_dic, log_name):
         patience = 0
         for epoch in range(epochs):
             random.shuffle(train_pairs)
-            batches = get_batches(train_pairs, batch_size)
+            batches = get_batches(train_pairs, neighbors, batch_size)
 
-            data_iter = tqdm.tqdm(enumerate(batches),
-                                desc="EP:%d" % (epoch),
-                                total=len(batches),
+            data_iter = tqdm.tqdm(batches,
+                                desc="epoch %d" % (epoch),
+                                total=(len(train_pairs) + (batch_size - 1)) // batch_size,
                                 bar_format="{l_bar}{r_bar}")
             avg_loss = 0.0
 
-            for i, data in data_iter:
-                feed_dict = {train_inputs: data[0], train_labels: data[1], train_types: data[2]}
+            i = 0
+            for data in data_iter:
+                feed_dict = {train_inputs: data[0], train_labels: data[1], train_types: data[2], node_neigh: data[3]}
                 _, loss_value, summary_str = sess.run([optimizer, loss, merged], feed_dict)
                 writer.add_summary(summary_str, iter)
 
@@ -347,11 +351,12 @@ def train_model(network_data, feature_dic, log_name):
                         "loss": loss_value
                     }
                     data_iter.write(str(post_fix))
+                i += 1
             
             final_model = dict(zip(edge_types[:-1], [dict() for _ in range(edge_type_count)]))
             for i in range(edge_type_count):
                 for j in range(num_nodes):
-                    final_model[edge_types[i]][index2word[j]] = np.array(sess.run(last_node_embed, {train_inputs: [j], train_types: [i]})[0])
+                    final_model[edge_types[i]][index2word[j]] = np.array(sess.run(last_node_embed, {train_inputs: [j], train_types: [i], node_neigh: [neighbors[j]]})[0])
             valid_aucs, valid_f1s, valid_prs = [], [], []
             test_aucs, test_f1s, test_prs = [], [], []
             for i in range(edge_type_count):
@@ -366,7 +371,7 @@ def train_model(network_data, feature_dic, log_name):
                     test_f1s.append(tmp_f1)
                     test_prs.append(tmp_pr)
             print('valid auc:', np.mean(valid_aucs))
-            print('valid pr', np.mean(valid_prs))
+            print('valid pr:', np.mean(valid_prs))
             print('valid f1:', np.mean(valid_f1s))
 
             average_auc = np.mean(test_aucs)
