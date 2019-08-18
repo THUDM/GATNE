@@ -72,10 +72,12 @@ If you have ANY difficulties to get things working in the above steps, feel free
 Please cite our paper if you find this code useful for your research:
 
 ```
-@article{cen2019representation,
-  title={Representation Learning for Attributed Multiplex Heterogeneous Network},
-  author={Cen, Yukuo and Zou, Xu and Zhang, Jianwei and Yang, Hongxia and Zhou, Jingren and Tang, Jie},
-  journal={arXiv preprint arXiv:1905.01669},
-  year={2019}
+@inproceedings{cen2019representation,
+  title = {Representation Learning for Attributed Multiplex Heterogeneous Network},
+  author = {Cen, Yukuo and Zou, Xu and Zhang, Jianwei and Yang, Hongxia and Zhou, Jingren and Tang, Jie},
+  booktitle = {Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining},
+  year = {2019},
+  pages = {1358--1368},
+  publisher = {ACM},
 }
 ```
