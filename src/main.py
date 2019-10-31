@@ -195,6 +195,10 @@ def train_model(network_data, feature_dic, log_name):
     train_pairs = generate_pairs(all_walks, vocab)
 
     edge_types = list(network_data.keys())
+    if edge_types[-1] != 'Base':
+        edge_types.sort()
+        edge_types.remove('Base')
+        edge_types.append('Base')
 
     num_nodes = len(index2word)
     edge_type_count = len(edge_types) - 1
