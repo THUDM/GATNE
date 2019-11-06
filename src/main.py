@@ -75,25 +75,29 @@ def get_score(local_model, node1, node2):
         vector2 = local_model[node2]
         return np.dot(vector1, vector2) / (np.linalg.norm(vector1) * np.linalg.norm(vector2))
     except Exception as e:
-        print(e)
+        pass
 
 
 def evaluate(model, true_edges, false_edges):
     true_list = list()
     prediction_list = list()
+    true_num = 0
     for edge in true_edges:
         tmp_score = get_score(model, str(edge[0]), str(edge[1]))
-        true_list.append(1)
-        prediction_list.append(tmp_score)
+        if tmp_score is not None:
+            true_list.append(1)
+            prediction_list.append(tmp_score)
+            true_num += 1
 
     for edge in false_edges:
         tmp_score = get_score(model, str(edge[0]), str(edge[1]))
-        true_list.append(0)
-        prediction_list.append(tmp_score)
+        if tmp_score is not None:
+            true_list.append(0)
+            prediction_list.append(tmp_score)
 
     sorted_pred = prediction_list[:]
     sorted_pred.sort()
-    threshold = sorted_pred[-len(true_edges)]
+    threshold = sorted_pred[-true_num]
 
     y_pred = np.zeros(len(prediction_list), dtype=np.int32)
     for i in range(len(prediction_list)):
@@ -193,6 +197,10 @@ def train_model(network_data, feature_dic, log_name):
     train_pairs = generate_pairs(all_walks, vocab)
 
     edge_types = list(network_data.keys())
+    if edge_types[-1] != 'Base':
+        edge_types.sort()
+        edge_types.remove('Base')
+        edge_types.append('Base')
 
     num_nodes = len(index2word)
     edge_type_count = len(edge_types) - 1
