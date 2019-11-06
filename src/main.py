@@ -237,8 +237,8 @@ def train_model(network_data, feature_dic, log_name):
         print('feature dimension: ' + str(feature_dim))
         features = np.zeros((num_nodes, feature_dim), dtype=np.float32)
         for key, value in feature_dic.items():
-            if key in index2word:
-                features[index2word.index(key), :] = np.array(value)
+            if key in vocab:
+                features[vocab[key].index, :] = np.array(value)
         
     with graph.as_default():
         global_step = tf.Variable(0, name='global_step', trainable=False)
@@ -328,7 +328,7 @@ def train_model(network_data, feature_dic, log_name):
         sess.run(init)
 
         print('Training')
-        iter = 0
+        g_iter = 0
         best_score = 0
         patience = 0
         for epoch in range(epochs):
@@ -341,13 +341,12 @@ def train_model(network_data, feature_dic, log_name):
                                 bar_format="{l_bar}{r_bar}")
             avg_loss = 0.0
 
-            i = 0
-            for data in data_iter:
+            for i, data in enumerate(data_iter):
                 feed_dict = {train_inputs: data[0], train_labels: data[1], train_types: data[2], node_neigh: data[3]}
                 _, loss_value, summary_str = sess.run([optimizer, loss, merged], feed_dict)
-                writer.add_summary(summary_str, iter)
+                writer.add_summary(summary_str, g_iter)
 
-                iter += 1
+                g_iter += 1
 
                 avg_loss += loss_value
 
@@ -359,7 +358,6 @@ def train_model(network_data, feature_dic, log_name):
                         "loss": loss_value
                     }
                     data_iter.write(str(post_fix))
-                i += 1
             
             final_model = dict(zip(edge_types[:-1], [dict() for _ in range(edge_type_count)]))
             for i in range(edge_type_count):
