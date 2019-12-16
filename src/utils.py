@@ -19,7 +19,7 @@ def get_G_from_edges(edges):
     return tmp_G
 
 def load_training_data(f_name):
-    print('We are loading training data from:', f_name)
+    print('We are loading data from:', f_name)
     edge_data_by_type = dict()
     all_edges = list()
     all_nodes = list()
@@ -36,13 +36,12 @@ def load_training_data(f_name):
     all_nodes = list(set(all_nodes))
     all_edges = list(set(all_edges))
     edge_data_by_type['Base'] = all_edges
-    print('total training nodes: ' + str(len(all_nodes)))
-    print('Finish loading training data')
+    print('Total training nodes: ' + str(len(all_nodes)))
     return edge_data_by_type
 
 
 def load_testing_data(f_name):
-    print('We are loading testing data from:', f_name)
+    print('We are loading data from:', f_name)
     true_edge_data_by_type = dict()
     false_edge_data_by_type = dict()
     all_edges = list()
@@ -62,7 +61,6 @@ def load_testing_data(f_name):
             all_nodes.append(x)
             all_nodes.append(y)
     all_nodes = list(set(all_nodes))
-    print('Finish loading testing data')
     return true_edge_data_by_type, false_edge_data_by_type
 
 def load_node_type(f_name):
