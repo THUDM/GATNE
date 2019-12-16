@@ -36,8 +36,8 @@ def parse_args():
     parser.add_argument('--eval-type', type=str, default='all',
                         help='The edge type(s) for evaluation.')
     
-    parser.add_argument('--schema', default=None,
-                        help='The metapath schema (e.g., U-I-U).')
+    parser.add_argument('--schema', type=str, default=None,
+                        help='The metapath schema (e.g., U-I-U,I-U-I).')
 
     parser.add_argument('--dimensions', type=int, default=200,
                         help='Number of dimensions. Default is 200.')
@@ -159,15 +159,10 @@ def get_batches(pairs, batch_size):
     return result
 
 def generate_walks(network_data):
-    base_network = network_data['Base']
-
     if args.schema is not None:
         node_type = load_node_type(file_name + '/node_type.txt')
     else:
         node_type = None
-
-    base_walker = RWGraph(get_G_from_edges(base_network), node_type=node_type)
-    base_walks = base_walker.simulate_walks(args.num_walks, args.walk_length, schema=args.schema)
 
     all_walks = []
     for layer_id in network_data:
@@ -178,19 +173,19 @@ def generate_walks(network_data):
         # start to do the random walk on a layer
 
         layer_walker = RWGraph(get_G_from_edges(tmp_data))
-        layer_walks = layer_walker.simulate_walks(args.num_walks, args.walk_length)
+        layer_walks = layer_walker.simulate_walks(args.num_walks, args.walk_length, schema=args.schema)
 
         all_walks.append(layer_walks)
 
     print('finish generating the walks')
 
-    return base_walks, all_walks
+    return all_walks
 
 
 def train_model(network_data, feature_dic, log_name):
-    base_walks, all_walks = generate_walks(network_data)
+    all_walks = generate_walks(network_data)
 
-    vocab, index2word = generate_vocab([base_walks])
+    vocab, index2word = generate_vocab(all_walks)
 
     train_pairs = generate_pairs(all_walks, vocab)
 
