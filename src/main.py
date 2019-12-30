@@ -1,151 +1,19 @@
-import argparse
 import math
 import os
 import sys
 import time
-from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
 import tqdm
-from gensim.models.keyedvectors import Vocab
 from numpy import random
-from six import iteritems
-from sklearn.metrics import (auc, f1_score, precision_recall_curve,
-                             roc_auc_score)
 
 from utils import *
-from walk import RWGraph
 
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--input', type=str, default='data/amazon',
-                        help='Input dataset path')
-    
-    parser.add_argument('--features', type=str, default=None,
-                        help='Input node features')
-
-    parser.add_argument('--epoch', type=int, default=100,
-                        help='Number of epoch. Default is 100.')
-
-    parser.add_argument('--batch-size', type=int, default=64,
-                        help='Number of batch_size. Default is 64.')
-
-    parser.add_argument('--eval-type', type=str, default='all',
-                        help='The edge type(s) for evaluation.')
-    
-    parser.add_argument('--schema', type=str, default=None,
-                        help='The metapath schema (e.g., U-I-U,I-U-I).')
-
-    parser.add_argument('--dimensions', type=int, default=200,
-                        help='Number of dimensions. Default is 200.')
-
-    parser.add_argument('--edge-dim', type=int, default=10,
-                        help='Number of edge embedding dimensions. Default is 10.')
-    
-    parser.add_argument('--att-dim', type=int, default=20,
-                        help='Number of attention dimensions. Default is 20.')
-
-    parser.add_argument('--walk-length', type=int, default=10,
-                        help='Length of walk per source. Default is 10.')
-
-    parser.add_argument('--num-walks', type=int, default=20,
-                        help='Number of walks per source. Default is 20.')
-
-    parser.add_argument('--window-size', type=int, default=5,
-                        help='Context size for optimization. Default is 5.')
-    
-    parser.add_argument('--negative-samples', type=int, default=5,
-                        help='Negative samples for optimization. Default is 5.')
-    
-    parser.add_argument('--neighbor-samples', type=int, default=10,
-                        help='Neighbor samples for aggregation. Default is 10.')
-
-    parser.add_argument('--patience', type=int, default=5,
-                        help='Early stopping patience. Default is 5.')
-    
-    return parser.parse_args()
-
-
-def get_score(local_model, node1, node2):
-    try:
-        vector1 = local_model[node1]
-        vector2 = local_model[node2]
-        return np.dot(vector1, vector2) / (np.linalg.norm(vector1) * np.linalg.norm(vector2))
-    except Exception as e:
-        pass
-
-
-def evaluate(model, true_edges, false_edges):
-    true_list = list()
-    prediction_list = list()
-    true_num = 0
-    for edge in true_edges:
-        tmp_score = get_score(model, str(edge[0]), str(edge[1]))
-        if tmp_score is not None:
-            true_list.append(1)
-            prediction_list.append(tmp_score)
-            true_num += 1
-
-    for edge in false_edges:
-        tmp_score = get_score(model, str(edge[0]), str(edge[1]))
-        if tmp_score is not None:
-            true_list.append(0)
-            prediction_list.append(tmp_score)
-
-    sorted_pred = prediction_list[:]
-    sorted_pred.sort()
-    threshold = sorted_pred[-true_num]
-
-    y_pred = np.zeros(len(prediction_list), dtype=np.int32)
-    for i in range(len(prediction_list)):
-        if prediction_list[i] >= threshold:
-            y_pred[i] = 1
-
-    y_true = np.array(true_list)
-    y_scores = np.array(prediction_list)
-    ps, rs, _ = precision_recall_curve(y_true, y_scores)
-    return roc_auc_score(y_true, y_scores), f1_score(y_true, y_pred), auc(rs, ps)
-
-def generate_pairs(all_walks, vocab):
-    pairs = []
-    skip_window = args.window_size // 2
-    for layer_id, walks in enumerate(all_walks):
-        for walk in walks:
-            for i in range(len(walk)):
-                for j in range(1, skip_window + 1):
-                    if i - j >= 0:
-                        pairs.append((vocab[walk[i]].index, vocab[walk[i - j]].index, layer_id))
-                    if i + j < len(walk):
-                        pairs.append((vocab[walk[i]].index, vocab[walk[i + j]].index, layer_id))
-    return pairs
-
-def generate_vocab(all_walks):
-    index2word = []
-    raw_vocab = defaultdict(int)
-
-    for walks in all_walks:
-        for walk in walks:
-            for word in walk:
-                raw_vocab[word] += 1
-
-    vocab = {}
-    for word, v in iteritems(raw_vocab):
-        vocab[word] = Vocab(count=v, index=len(index2word))
-        index2word.append(word)
-
-    index2word.sort(key=lambda word: vocab[word].count, reverse=True)
-    for i, word in enumerate(index2word):
-        vocab[word].index = i
-    
-    return vocab, index2word
 
 def get_batches(pairs, neighbors, batch_size):
     n_batches = (len(pairs) + (batch_size - 1)) // batch_size
 
-    # result = []
     for idx in range(n_batches):
         x, y, t, neigh = [], [], [], []
         for i in range(batch_size):
@@ -156,49 +24,19 @@ def get_batches(pairs, neighbors, batch_size):
             y.append(pairs[index][1])
             t.append(pairs[index][2])
             neigh.append(neighbors[pairs[index][0]])
-        # result.append((np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32), np.array(neigh).astype(np.int32)))
         yield (np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32), np.array(neigh).astype(np.int32)) 
-    # return result
-
-def generate_walks(network_data):
-    if args.schema is not None:
-        node_type = load_node_type(file_name + '/node_type.txt')
-    else:
-        node_type = None
-
-    all_walks = []
-    for layer_id in network_data:
-        if layer_id == 'Base':
-            continue
-
-        tmp_data = network_data[layer_id]
-        # start to do the random walk on a layer
-
-        layer_walker = RWGraph(get_G_from_edges(tmp_data))
-        layer_walks = layer_walker.simulate_walks(args.num_walks, args.walk_length, schema=args.schema)
-
-        all_walks.append(layer_walks)
-
-    print('Finish generating the walks')
-
-    return all_walks
-
 
 def train_model(network_data, feature_dic, log_name):
-    all_walks = generate_walks(network_data)
+    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name)
 
     vocab, index2word = generate_vocab(all_walks)
 
-    train_pairs = generate_pairs(all_walks, vocab)
+    train_pairs = generate_pairs(all_walks, vocab, args.window_size)
 
     edge_types = list(network_data.keys())
-    if edge_types[-1] != 'Base':
-        edge_types.sort()
-        edge_types.remove('Base')
-        edge_types.append('Base')
 
     num_nodes = len(index2word)
-    edge_type_count = len(edge_types) - 1
+    edge_type_count = len(edge_types)
     epochs = args.epoch
     batch_size = args.batch_size
     embedding_size = args.dimensions # Dimension of the embedding vector.
@@ -255,8 +93,6 @@ def train_model(network_data, feature_dic, log_name):
         nce_weights = tf.Variable(tf.truncated_normal([num_nodes, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
         nce_biases = tf.Variable(tf.zeros([num_nodes]))
 
-        # node_neighbors = tf.Variable(neighbors, trainable=False)
-
         # Input data
         train_inputs = tf.placeholder(tf.int32, shape=[None])
         train_labels = tf.placeholder(tf.int32, shape=[None, 1])
@@ -270,7 +106,6 @@ def train_model(network_data, feature_dic, log_name):
         else:
             node_embed = tf.nn.embedding_lookup(node_embeddings, train_inputs)
         
-        # node_neigh = tf.nn.embedding_lookup(node_neighbors, train_inputs)
         if feature_dic is not None:
             node_embed_neighbors = tf.nn.embedding_lookup(node_features, node_neigh)
             node_embed_tmp = tf.concat([tf.matmul(tf.reshape(tf.slice(node_embed_neighbors, [0, i, 0, 0], [-1, 1, -1, -1]), [-1, feature_dim]), tf.reshape(tf.slice(u_embed_trans, [i, 0, 0], [1, -1, -1]), [feature_dim, embedding_u_size])) for i in range(edge_type_count)], axis=0)
@@ -354,7 +189,7 @@ def train_model(network_data, feature_dic, log_name):
                     }
                     data_iter.write(str(post_fix))
             
-            final_model = dict(zip(edge_types[:-1], [dict() for _ in range(edge_type_count)]))
+            final_model = dict(zip(edge_types, [dict() for _ in range(edge_type_count)]))
             for i in range(edge_type_count):
                 for j in range(num_nodes):
                     final_model[edge_types[i]][index2word[j]] = np.array(sess.run(last_node_embed, {train_inputs: [j], train_types: [i], node_neigh: [neighbors[j]]})[0])
