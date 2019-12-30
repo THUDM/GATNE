@@ -28,9 +28,7 @@ def get_batches(pairs, neighbors, batch_size):
 
 def train_model(network_data, feature_dic, log_name):
     all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name)
-
     vocab, index2word = generate_vocab(all_walks)
-
     train_pairs = generate_pairs(all_walks, vocab, args.window_size)
 
     edge_types = list(network_data.keys())

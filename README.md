@@ -10,10 +10,8 @@ Accepted to KDD 2019 Research Track!
 
 ## Prerequisites
 
-- Linux or macOS
 - Python 3
-- TensorFlow GPU >= 1.8
-- NVIDIA GPU + CUDA cuDNN
+- TensorFlow >= 1.8 (or PyTorch)
 
 ## Getting Started
 
@@ -45,7 +43,7 @@ These datasets are sampled from the original datasets.
 
 #### Training on the existing datasets
 
-You can use `./scripts/run_example.sh` or `python src/main.py --input data/example` to train GATNE-T model on the example data. (If you share the server with others or you want to use the specific GPU(s), you may need to set `CUDA_VISIBLE_DEVICES`.) 
+You can use `./scripts/run_example.sh` or `python src/main.py --input data/example` or `python src/main_pytorch.py --input data/example` to train GATNE-T model on the example data. (If you share the server with others or you want to use the specific GPU(s), you may need to set `CUDA_VISIBLE_DEVICES`.) 
 
 If you want to train on the Amazon dataset, you can run `python src/main.py --input data/amazon` or `python src/main.py --input data/amazon --features data/amazon/feature.txt` to train GATNE-T model or GATNE-I model, respectively. 
 
