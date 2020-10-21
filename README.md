@@ -8,6 +8,23 @@ Representation Learning for Attributed Multiplex Heterogeneous Network.
 
 Accepted to KDD 2019 Research Track!
 
+## ❗ News
+
+Our GATNE models have been implemented by many popular graph toolkits:
+- Deep Graph Library ([DGL](https://github.com/dmlc/dgl)): see https://github.com/dmlc/dgl/tree/master/examples/pytorch/GATNE-T 
+- Paddle Graph Learning ([PGL](https://github.com/PaddlePaddle/PGL)): see https://github.com/PaddlePaddle/PGL/tree/main/examples/GATNE
+- [CogDL](https://github.com/THUDM/cogdl): see https://github.com/THUDM/cogdl/blob/master/cogdl/models/emb/gatne.py
+
+Some recent papers have listed GATNE models as a strong baseline:
+- [Deep Adversarial Completion for Sparse Heterogeneous Information Network Embedding](https://dl.acm.org/doi/pdf/10.1145/3366423.3380134) (WWW'20)
+- [Decoupled Graph Convolution Network for Inferring Substitutable and Complementary Items](https://dl.acm.org/doi/pdf/10.1145/3340531.3412695) (CIKM'20)
+- [Graph Attention Networks over Edge Content-Based Channels](https://dl.acm.org/doi/pdf/10.1145/3394486.3403233) (KDD'20)
+- [Temporal heterogeneous interaction graph embedding for next-item recommendation](http://shichuan.org/doc/84.pdf) (PKDD'20)
+- [Link Inference via Heterogeneous Multi-view Graph Neural Networks](https://link.springer.com/chapter/10.1007/978-3-030-59410-7_48) (DASFAA 2020)
+- [Multi-View Collaborative Network Embedding](https://arxiv.org/pdf/2005.08189.pdf) (Arxiv, May 2020)
+
+Please let me know if your toolkit includes GATNE models or your paper uses GATNE models as baselines. 
+
 ## Prerequisites
 
 - Python 3
