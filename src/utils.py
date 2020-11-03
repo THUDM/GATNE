@@ -140,6 +140,7 @@ def generate_walks(network_data, num_walks, walk_length, schema, file_name):
         # start to do the random walk on a layer
 
         layer_walker = RWGraph(get_G_from_edges(tmp_data))
+        print('Generating random walks for layer', layer_id)
         layer_walks = layer_walker.simulate_walks(num_walks, walk_length, schema=schema)
 
         all_walks.append(layer_walks)
