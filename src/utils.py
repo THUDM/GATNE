@@ -128,6 +128,18 @@ def load_node_type(f_name):
             node_type[items[0]] = items[1]
     return node_type
 
+def load_feature_data(f_name):
+    feature_dic = {}
+    with open(f_name, 'r') as f:
+        first = True
+        for line in f:
+            if first:
+                first = False
+                continue
+            items = line.strip().split()
+            feature_dic[items[0]] = items[1:]
+    return feature_dic
+
 def generate_walks(network_data, num_walks, walk_length, schema, file_name):
     if schema is not None:
         node_type = load_node_type(file_name + '/node_type.txt')

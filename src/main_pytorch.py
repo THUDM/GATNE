@@ -32,7 +32,7 @@ def get_batches(pairs, neighbors, batch_size):
 
 class GATNEModel(nn.Module):
     def __init__(
-        self, num_nodes, embedding_size, embedding_u_size, edge_type_count, dim_a
+        self, num_nodes, embedding_size, embedding_u_size, edge_type_count, dim_a, features
     ):
         super(GATNEModel, self).__init__()
         self.num_nodes = num_nodes
@@ -40,6 +40,13 @@ class GATNEModel(nn.Module):
         self.embedding_u_size = embedding_u_size
         self.edge_type_count = edge_type_count
         self.dim_a = dim_a
+
+        self.features = None
+        if features is not None:
+            self.features = features
+            feature_dim = self.features.shape[-1]
+            self.embed_trans = Parameter(torch.FloatTensor(feature_dim, embedding_size))
+            self.u_embed_trans = Parameter(torch.FloatTensor(edge_type_count, feature_dim, embedding_u_size))
 
         self.node_embeddings = Parameter(torch.FloatTensor(num_nodes, embedding_size))
         self.node_type_embeddings = Parameter(
@@ -56,6 +63,9 @@ class GATNEModel(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
+        if self.features is not None:
+            self.embed_trans.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
+            self.u_embed_trans.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
         self.node_embeddings.data.uniform_(-1.0, 1.0)
         self.node_type_embeddings.data.uniform_(-1.0, 1.0)
         self.trans_weights.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
@@ -63,8 +73,12 @@ class GATNEModel(nn.Module):
         self.trans_weights_s2.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
 
     def forward(self, train_inputs, train_types, node_neigh):
-        node_embed = self.node_embeddings[train_inputs]
-        node_embed_neighbors = self.node_type_embeddings[node_neigh]
+        if self.features is None:
+            node_embed = self.node_embeddings[train_inputs]
+            node_embed_neighbors = self.node_type_embeddings[node_neigh]
+        else:
+            node_embed = torch.mm(self.features[train_inputs], self.embed_trans)
+            node_embed_neighbors = torch.einsum('bijk,akm->bijam', self.features[node_neigh], self.u_embed_trans)
         node_embed_tmp = torch.cat(
             [
                 node_embed_neighbors[:, i, :, i, :].unsqueeze(1)
@@ -131,7 +145,7 @@ class NSLoss(nn.Module):
         return -loss.sum() / n
 
 
-def train_model(network_data):
+def train_model(network_data, feature_dic):
     all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name)
     vocab, index2word = generate_vocab(all_walks)
     train_pairs = generate_pairs(all_walks, vocab, args.window_size)
@@ -177,8 +191,18 @@ def train_model(network_data):
                     np.random.choice(neighbors[i][r], size=neighbor_samples)
                 )
 
+    features = None
+    if feature_dic is not None:
+        feature_dim = len(list(feature_dic.values())[0])
+        print('feature dimension: ' + str(feature_dim))
+        features = np.zeros((num_nodes, feature_dim), dtype=np.float32)
+        for key, value in feature_dic.items():
+            if key in vocab:
+                features[vocab[key].index, :] = np.array(value)
+        features = torch.FloatTensor(features).to(device)
+
     model = GATNEModel(
-        num_nodes, embedding_size, embedding_u_size, edge_type_count, dim_a
+        num_nodes, embedding_size, embedding_u_size, edge_type_count, dim_a, features
     )
     nsloss = NSLoss(num_nodes, num_sampled, embedding_size)
 
@@ -186,7 +210,7 @@ def train_model(network_data):
     nsloss.to(device)
 
     optimizer = torch.optim.Adam(
-        [{"params": model.parameters()}, {"params": nsloss.parameters()}], lr=1e-4
+        [{"params": model.parameters()}, {"params": nsloss.parameters()}], lr=1e-3
     )
 
     best_score = 0
@@ -279,6 +303,10 @@ if __name__ == "__main__":
     args = parse_args()
     file_name = args.input
     print(args)
+    if args.features is not None:
+        feature_dic = load_feature_data(args.features)
+    else:
+        feature_dic = None
 
     training_data_by_type = load_training_data(file_name + "/train.txt")
     valid_true_data_by_edge, valid_false_data_by_edge = load_testing_data(
@@ -288,7 +316,7 @@ if __name__ == "__main__":
         file_name + "/test.txt"
     )
 
-    average_auc, average_f1, average_pr = train_model(training_data_by_type)
+    average_auc, average_f1, average_pr = train_model(training_data_by_type, feature_dic)
 
     print("Overall ROC-AUC:", average_auc)
     print("Overall PR-AUC", average_pr)

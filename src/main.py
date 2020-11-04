@@ -229,15 +229,7 @@ if __name__ == "__main__":
     file_name = args.input
     print(args)
     if args.features is not None:
-        feature_dic = {}
-        with open(args.features, 'r') as f:
-            first = True
-            for line in f:
-                if first:
-                    first = False
-                    continue
-                items = line.strip().split()
-                feature_dic[items[0]] = items[1:]
+        feature_dic = load_feature_data(args.features)
     else:
         feature_dic = None
 
