@@ -146,7 +146,7 @@ class NSLoss(nn.Module):
 
 
 def train_model(network_data, feature_dic):
-    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name)
+    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name, args.num_workers)
     vocab, index2word = generate_vocab(all_walks)
     train_pairs = generate_pairs(all_walks, vocab, args.window_size)
 
@@ -210,7 +210,7 @@ def train_model(network_data, feature_dic):
     nsloss.to(device)
 
     optimizer = torch.optim.Adam(
-        [{"params": model.parameters()}, {"params": nsloss.parameters()}], lr=1e-3
+        [{"params": model.parameters()}, {"params": nsloss.parameters()}], lr=1e-4
     )
 
     best_score = 0

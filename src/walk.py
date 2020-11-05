@@ -1,9 +1,6 @@
-from os import walk
 import random
 import multiprocessing
 
-import networkx as nx
-import numpy as np
 from tqdm import tqdm
 
 def walk(args):
@@ -19,7 +16,7 @@ def walk(args):
     while len(walk) < walk_length:
         cur = walk[-1]
         candidates = []
-        for node in G[cur].keys():
+        for node in G[cur]:
             if schema == '' or node_type[node] == schema_items[len(walk) % (len(schema_items) - 1)]:
                 candidates.append(node)
         if candidates:
@@ -43,8 +40,7 @@ class RWGraph():
 
     def simulate_walks(self, num_walks, walk_length, schema=None):
         all_walks = []
-        nodes = list(G.nodes())
-        # print('Walk iteration:')
+        nodes = list(G.keys())
         random.shuffle(nodes)
 
         if schema is None:
@@ -55,6 +51,6 @@ class RWGraph():
             for schema_iter in schema_list:
                 with multiprocessing.Pool(self.num_workers) as pool:
                     walks = list(pool.imap(walk, ((walk_length, node, schema_iter) for node in tqdm(self.node_list(nodes, num_walks)) if schema_iter.split('-')[0] == node_type[node]), chunksize=512))
-                all_walk.extend(walks)
+                all_walks.extend(walks)
 
         return all_walks

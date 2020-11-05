@@ -27,7 +27,7 @@ def get_batches(pairs, neighbors, batch_size):
         yield (np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32), np.array(neigh).astype(np.int32)) 
 
 def train_model(network_data, feature_dic, log_name):
-    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name)
+    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name, args.num_workers)
     vocab, index2word = generate_vocab(all_walks)
     train_pairs = generate_pairs(all_walks, vocab, args.window_size)
 
@@ -77,7 +77,6 @@ def train_model(network_data, feature_dic, log_name):
         if feature_dic is not None:
             node_features = tf.Variable(features, name='node_features', trainable=False)
             feature_weights = tf.Variable(tf.truncated_normal([feature_dim, embedding_size], stddev=1.0))
-            linear = tf.layers.Dense(units=embedding_size, activation=tf.nn.tanh, use_bias=True)
 
             embed_trans = tf.Variable(tf.truncated_normal([feature_dim, embedding_size], stddev=1.0 / math.sqrt(embedding_size)))
             u_embed_trans = tf.Variable(tf.truncated_normal([edge_type_count, feature_dim, embedding_u_size], stddev=1.0 / math.sqrt(embedding_size)))

@@ -1,14 +1,19 @@
 import argparse
 from collections import defaultdict
 
-import networkx as nx
 import numpy as np
-from gensim.models.keyedvectors import Vocab
 from six import iteritems
 from sklearn.metrics import (auc, f1_score, precision_recall_curve,
                              roc_auc_score)
 
 from walk import RWGraph
+
+
+class Vocab(object):
+
+    def __init__(self, count, index):
+        self.count = count
+        self.index = index
 
 
 def parse_args():
@@ -59,24 +64,18 @@ def parse_args():
     parser.add_argument('--patience', type=int, default=5,
                         help='Early stopping patience. Default is 5.')
     
+    parser.add_argument('--num-workers', type=int, default=8,
+                        help='Number of workers for generating random walks. Default is 8.')
+
     return parser.parse_args()
 
 def get_G_from_edges(edges):
-    edge_dict = dict()
+    edge_dict = defaultdict(set)
     for edge in edges:
-        edge_key = str(edge[0]) + '_' + str(edge[1])
-        if edge_key not in edge_dict:
-            edge_dict[edge_key] = 1
-        else:
-            edge_dict[edge_key] += 1
-    tmp_G = nx.Graph()
-    for edge_key in edge_dict:
-        weight = edge_dict[edge_key]
-        x = edge_key.split('_')[0]
-        y = edge_key.split('_')[1]
-        tmp_G.add_edge(x, y)
-        tmp_G[x][y]['weight'] = weight
-    return tmp_G
+        u, v = str(edge[0]), str(edge[1])
+        edge_dict[u].add(v)
+        edge_dict[v].add(u)
+    return edge_dict
 
 def load_training_data(f_name):
     print('We are loading data from:', f_name)
@@ -100,7 +99,6 @@ def load_testing_data(f_name):
     print('We are loading data from:', f_name)
     true_edge_data_by_type = dict()
     false_edge_data_by_type = dict()
-    all_edges = list()
     all_nodes = list()
     with open(f_name, 'r') as f:
         for line in f:
@@ -140,7 +138,7 @@ def load_feature_data(f_name):
             feature_dic[items[0]] = items[1:]
     return feature_dic
 
-def generate_walks(network_data, num_walks, walk_length, schema, file_name):
+def generate_walks(network_data, num_walks, walk_length, schema, file_name, num_workers):
     if schema is not None:
         node_type = load_node_type(file_name + '/node_type.txt')
     else:
@@ -151,7 +149,7 @@ def generate_walks(network_data, num_walks, walk_length, schema, file_name):
         tmp_data = network_data[layer_id]
         # start to do the random walk on a layer
 
-        layer_walker = RWGraph(get_G_from_edges(tmp_data))
+        layer_walker = RWGraph(get_G_from_edges(tmp_data), node_type, num_workers)
         print('Generating random walks for layer', layer_id)
         layer_walks = layer_walker.simulate_walks(num_walks, walk_length, schema=schema)
 
