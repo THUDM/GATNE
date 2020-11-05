@@ -43,11 +43,11 @@ class GATNEModel(nn.Module):
             feature_dim = self.features.shape[-1]
             self.embed_trans = Parameter(torch.FloatTensor(feature_dim, embedding_size))
             self.u_embed_trans = Parameter(torch.FloatTensor(edge_type_count, feature_dim, embedding_u_size))
-
-        self.node_embeddings = Parameter(torch.FloatTensor(num_nodes, embedding_size))
-        self.node_type_embeddings = Parameter(
-            torch.FloatTensor(num_nodes, edge_type_count, embedding_u_size)
-        )
+        else:
+            self.node_embeddings = Parameter(torch.FloatTensor(num_nodes, embedding_size))
+            self.node_type_embeddings = Parameter(
+                torch.FloatTensor(num_nodes, edge_type_count, embedding_u_size)
+            )
         self.trans_weights = Parameter(
             torch.FloatTensor(edge_type_count, embedding_u_size, embedding_size)
         )
@@ -62,8 +62,9 @@ class GATNEModel(nn.Module):
         if self.features is not None:
             self.embed_trans.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
             self.u_embed_trans.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
-        self.node_embeddings.data.uniform_(-1.0, 1.0)
-        self.node_type_embeddings.data.uniform_(-1.0, 1.0)
+        else:
+            self.node_embeddings.data.uniform_(-1.0, 1.0)
+            self.node_type_embeddings.data.uniform_(-1.0, 1.0)
         self.trans_weights.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
         self.trans_weights_s1.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
         self.trans_weights_s2.data.normal_(std=1.0 / math.sqrt(self.embedding_size))
