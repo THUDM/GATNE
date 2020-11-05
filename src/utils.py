@@ -1,10 +1,13 @@
 import argparse
+import multiprocessing
 from collections import defaultdict
+from operator import index
 
 import numpy as np
 from six import iteritems
 from sklearn.metrics import (auc, f1_score, precision_recall_curve,
                              roc_auc_score)
+from tqdm import tqdm
 
 from walk import RWGraph
 
@@ -24,6 +27,9 @@ def parse_args():
     
     parser.add_argument('--features', type=str, default=None,
                         help='Input node features')
+
+    parser.add_argument('--walk-file', type=str, default=None,
+                        help='Input random walks')
 
     parser.add_argument('--epoch', type=int, default=100,
                         help='Number of epoch. Default is 100.')
@@ -64,8 +70,8 @@ def parse_args():
     parser.add_argument('--patience', type=int, default=5,
                         help='Early stopping patience. Default is 5.')
     
-    parser.add_argument('--num-workers', type=int, default=8,
-                        help='Number of workers for generating random walks. Default is 8.')
+    parser.add_argument('--num-workers', type=int, default=16,
+                        help='Number of workers for generating random walks. Default is 16.')
 
     return parser.parse_args()
 
@@ -145,8 +151,8 @@ def generate_walks(network_data, num_walks, walk_length, schema, file_name, num_
         node_type = None
 
     all_walks = []
-    for layer_id in network_data:
-        tmp_data = network_data[layer_id]
+    for layer_id, layer_name in enumerate(network_data):
+        tmp_data = network_data[layer_name]
         # start to do the random walk on a layer
 
         layer_walker = RWGraph(get_G_from_edges(tmp_data), node_type, num_workers)
@@ -159,11 +165,12 @@ def generate_walks(network_data, num_walks, walk_length, schema, file_name, num_
 
     return all_walks
 
-def generate_pairs(all_walks, vocab, window_size):
+def generate_pairs(all_walks, vocab, window_size, num_workers):
     pairs = []
     skip_window = window_size // 2
     for layer_id, walks in enumerate(all_walks):
-        for walk in walks:
+        print('Generating training pairs for layer', layer_id)
+        for walk in tqdm(walks):
             for i in range(len(walk)):
                 for j in range(1, skip_window + 1):
                     if i - j >= 0:
@@ -176,8 +183,9 @@ def generate_vocab(all_walks):
     index2word = []
     raw_vocab = defaultdict(int)
 
-    for walks in all_walks:
-        for walk in walks:
+    for layer_id, walks in enumerate(all_walks):
+        print('Counting vocab for layer', layer_id)
+        for walk in tqdm(walks):
             for word in walk:
                 raw_vocab[word] += 1
 
@@ -191,6 +199,56 @@ def generate_vocab(all_walks):
         vocab[word].index = i
     
     return vocab, index2word
+
+def load_walks(walk_file):
+    print('Loading walks')
+    all_walks = []
+    with open(walk_file, 'r') as f:
+        for line in f:
+            content = line.strip().split()
+            layer_id = int(content[0])
+            if layer_id >= len(all_walks):
+                all_walks.append([])
+            all_walks[layer_id].append(content[1:])
+    return all_walks
+
+def save_walks(walk_file, all_walks):
+    with open(walk_file, 'w') as f:
+        for layer_id, walks in enumerate(all_walks):
+            print('Saving walks for layer', layer_id)
+            for walk in tqdm(walks):
+                f.write(' '.join([str(layer_id)] + [str(x) for x in walk]) + '\n')
+
+def generate(network_data, num_walks, walk_length, schema, file_name, window_size, num_workers, walk_file):
+    if walk_file is not None:
+        all_walks = load_walks(walk_file)
+    else:
+        all_walks = generate_walks(network_data, num_walks, walk_length, schema, file_name, num_workers)
+        save_walks(file_name + '/walks.txt', all_walks)
+    vocab, index2word = generate_vocab(all_walks)
+    train_pairs = generate_pairs(all_walks, vocab, window_size, num_workers)
+
+    return vocab, index2word, train_pairs
+
+def generate_neighbors(network_data, vocab, num_nodes, edge_types, neighbor_samples):
+    edge_type_count = len(edge_types)
+    neighbors = [[[] for __ in range(edge_type_count)] for _ in range(num_nodes)]
+    for r in range(edge_type_count):
+        print('Generating neighbors for layer', r)
+        g = network_data[edge_types[r]]
+        for (x, y) in tqdm(g):
+            ix = vocab[x].index
+            iy = vocab[y].index
+            neighbors[ix][r].append(iy)
+            neighbors[iy][r].append(ix)
+        for i in range(num_nodes):
+            if len(neighbors[i][r]) == 0:
+                neighbors[i][r] = [i] * neighbor_samples
+            elif len(neighbors[i][r]) < neighbor_samples:
+                neighbors[i][r].extend(list(np.random.choice(neighbors[i][r], size=neighbor_samples-len(neighbors[i][r]))))
+            elif len(neighbors[i][r]) > neighbor_samples:
+                neighbors[i][r] = list(np.random.choice(neighbors[i][r], size=neighbor_samples))
+    return neighbors
 
 def get_score(local_model, node1, node2):
     try:

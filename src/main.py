@@ -5,7 +5,6 @@ import time
 
 import numpy as np
 import tensorflow as tf
-import tqdm
 from numpy import random
 
 from utils import *
@@ -27,9 +26,7 @@ def get_batches(pairs, neighbors, batch_size):
         yield (np.array(x).astype(np.int32), np.array(y).reshape(-1, 1).astype(np.int32), np.array(t).astype(np.int32), np.array(neigh).astype(np.int32)) 
 
 def train_model(network_data, feature_dic, log_name):
-    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name, args.num_workers)
-    vocab, index2word = generate_vocab(all_walks)
-    train_pairs = generate_pairs(all_walks, vocab, args.window_size)
+    vocab, index2word, train_pairs = generate(network_data, args.num_walks, args.walk_length, args.schema, file_name, args.window_size, args.num_workers, args.walk_file)
 
     edge_types = list(network_data.keys())
 
@@ -45,21 +42,7 @@ def train_model(network_data, feature_dic, log_name):
     att_head = 1
     neighbor_samples = args.neighbor_samples 
 
-    neighbors = [[[] for __ in range(edge_type_count)] for _ in range(num_nodes)]
-    for r in range(edge_type_count):
-        g = network_data[edge_types[r]]
-        for (x, y) in g:
-            ix = vocab[x].index
-            iy = vocab[y].index
-            neighbors[ix][r].append(iy)
-            neighbors[iy][r].append(ix)
-        for i in range(num_nodes):
-            if len(neighbors[i][r]) == 0:
-                neighbors[i][r] = [i] * neighbor_samples
-            elif len(neighbors[i][r]) < neighbor_samples:
-                neighbors[i][r].extend(list(np.random.choice(neighbors[i][r], size=neighbor_samples-len(neighbors[i][r]))))
-            elif len(neighbors[i][r]) > neighbor_samples:
-                neighbors[i][r] = list(np.random.choice(neighbors[i][r], size=neighbor_samples))
+    neighbors = generate_neighbors(network_data, vocab, num_nodes, edge_types, neighbor_samples)
 
     graph = tf.Graph()
 
@@ -162,10 +145,10 @@ def train_model(network_data, feature_dic, log_name):
             random.shuffle(train_pairs)
             batches = get_batches(train_pairs, neighbors, batch_size)
 
-            data_iter = tqdm.tqdm(batches,
-                                desc="epoch %d" % (epoch),
-                                total=(len(train_pairs) + (batch_size - 1)) // batch_size,
-                                bar_format="{l_bar}{r_bar}")
+            data_iter = tqdm(batches,
+                            desc="epoch %d" % (epoch),
+                            total=(len(train_pairs) + (batch_size - 1)) // batch_size,
+                            bar_format="{l_bar}{r_bar}")
             avg_loss = 0.0
 
             for i, data in enumerate(data_iter):

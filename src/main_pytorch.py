@@ -1,13 +1,9 @@
 import math
-import os
-import sys
-import time
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import tqdm
 from numpy import random
 from torch.nn.parameter import Parameter
 
@@ -146,9 +142,7 @@ class NSLoss(nn.Module):
 
 
 def train_model(network_data, feature_dic):
-    all_walks = generate_walks(network_data, args.num_walks, args.walk_length, args.schema, file_name, args.num_workers)
-    vocab, index2word = generate_vocab(all_walks)
-    train_pairs = generate_pairs(all_walks, vocab, args.window_size)
+    vocab, index2word, train_pairs = generate(network_data, args.num_walks, args.walk_length, args.schema, file_name, args.window_size, args.num_workers, args.walk_file)
 
     edge_types = list(network_data.keys())
 
@@ -166,30 +160,7 @@ def train_model(network_data, feature_dic):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    neighbors = [[[] for __ in range(edge_type_count)] for _ in range(num_nodes)]
-    for r in range(edge_type_count):
-        g = network_data[edge_types[r]]
-        for (x, y) in g:
-            ix = vocab[x].index
-            iy = vocab[y].index
-            neighbors[ix][r].append(iy)
-            neighbors[iy][r].append(ix)
-        for i in range(num_nodes):
-            if len(neighbors[i][r]) == 0:
-                neighbors[i][r] = [i] * neighbor_samples
-            elif len(neighbors[i][r]) < neighbor_samples:
-                neighbors[i][r].extend(
-                    list(
-                        np.random.choice(
-                            neighbors[i][r],
-                            size=neighbor_samples - len(neighbors[i][r]),
-                        )
-                    )
-                )
-            elif len(neighbors[i][r]) > neighbor_samples:
-                neighbors[i][r] = list(
-                    np.random.choice(neighbors[i][r], size=neighbor_samples)
-                )
+    neighbors = generate_neighbors(network_data, vocab, num_nodes, edge_types, neighbor_samples)
 
     features = None
     if feature_dic is not None:
@@ -219,7 +190,7 @@ def train_model(network_data, feature_dic):
         random.shuffle(train_pairs)
         batches = get_batches(train_pairs, neighbors, batch_size)
 
-        data_iter = tqdm.tqdm(
+        data_iter = tqdm(
             batches,
             desc="epoch %d" % (epoch),
             total=(len(train_pairs) + (batch_size - 1)) // batch_size,
