@@ -186,6 +186,7 @@ def train_model(network_data, feature_dic):
     )
 
     best_score = 0
+    test_score = (0.0, 0.0, 0.0)
     patience = 0
     for epoch in range(epochs):
         random.shuffle(train_pairs)
@@ -262,13 +263,14 @@ def train_model(network_data, feature_dic):
         cur_score = np.mean(valid_aucs)
         if cur_score > best_score:
             best_score = cur_score
+            test_score = (average_auc, average_f1, average_pr)
             patience = 0
         else:
             patience += 1
             if patience > args.patience:
                 print("Early Stopping")
                 break
-    return average_auc, average_f1, average_pr
+    return test_score
 
 
 if __name__ == "__main__":

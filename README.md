@@ -10,6 +10,15 @@ Accepted to KDD 2019 Research Track!
 
 ## ❗ News
 
+Recent Updates (Nov. 2020):
+- Use multiprocessing to speedup the random walk procedure (by `--num-workers`)
+- Support saving/loading walk file (by `--walk-file`)
+- The PyTorch version now supports node features (by `--features`)
+
+Some Tips:
+- Running on large-scale datasets needs to set a larger value for `batch-size` to speedup training (e.g., several hundred or thousand).
+- If **out of memory (OOM)** occurs, you may need to decrease the values of `dimensions` and `att-dim`.
+
 Our GATNE models have been implemented by many popular graph toolkits:
 - Deep Graph Library ([DGL](https://github.com/dmlc/dgl)): see https://github.com/dmlc/dgl/tree/master/examples/pytorch/GATNE-T 
 - Paddle Graph Learning ([PGL](https://github.com/PaddlePaddle/PGL)): see https://github.com/PaddlePaddle/PGL/tree/main/examples/GATNE
@@ -28,7 +37,7 @@ Please let me know if your toolkit includes GATNE models or your paper uses GATN
 ## Prerequisites
 
 - Python 3
-- TensorFlow >= 1.8 (or PyTorch)
+- TensorFlow >= 1.8 or PyTorch
 
 ## Getting Started
 
@@ -41,7 +50,7 @@ git clone https://github.com/THUDM/GATNE
 cd GATNE
 ```
 
-Please install dependencies by
+Please first install TensorFlow or PyTorch, and then install other dependencies by
 
 ```bash
 pip install -r requirements.txt
