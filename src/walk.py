@@ -54,7 +54,7 @@ class RWGraph():
             schema_list = schema.split(',')
             for schema_iter in schema_list:
                 with multiprocessing.Pool(self.num_workers, initializer=initializer, initargs=(self.G, self.node_type)) as pool:
-                    walks = list(pool.imap(walk, ((walk_length, node, schema_iter) for node in tqdm(self.node_list(nodes, num_walks)) if schema_iter.split('-')[0] == node_type[node]), chunksize=512))
+                    walks = list(pool.imap(walk, ((walk_length, node, schema_iter) for node in tqdm(self.node_list(nodes, num_walks)) if schema_iter.split('-')[0] == self.node_type[node]), chunksize=512))
                 all_walks.extend(walks)
 
         return all_walks
