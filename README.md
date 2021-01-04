@@ -16,6 +16,7 @@ Recent Updates (Nov. 2020):
 - The PyTorch version now supports node features (by `--features`)
 
 Some Tips:
+- The PyTorch version may not reproduce the results (especially on the Twitter dataset). Please use the original TensorFlow version (`src/main.py`) for reproducing the paper results.
 - Running on large-scale datasets needs to set a larger value for `batch-size` to speedup training (e.g., several hundred or thousand).
 - If **out of memory (OOM)** occurs, you may need to decrease the values of `dimensions` and `att-dim`.
 
