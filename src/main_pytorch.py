@@ -76,13 +76,7 @@ class GATNEModel(nn.Module):
         else:
             node_embed = torch.mm(self.features[train_inputs], self.embed_trans)
             node_embed_neighbors = torch.einsum('bijk,akm->bijam', self.features[node_neigh], self.u_embed_trans)
-        node_embed_tmp = torch.cat(
-            [
-                node_embed_neighbors[:, i, :, i, :].unsqueeze(1)
-                for i in range(self.edge_type_count)
-            ],
-            dim=1,
-        )
+        node_embed_tmp = torch.diagonal(node_embed_neighbors, dim1=1, dim2=3).permute(0, 3, 1, 2)
         node_type_embed = torch.sum(node_embed_tmp, dim=2)
 
         trans_w = self.trans_weights[train_types]
